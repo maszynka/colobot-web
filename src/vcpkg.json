@@ -1,0 +1,53 @@
+{
+    "name": "colobot",
+    "version-string": "0.1.0",
+    "builtin-baseline": "b322364f06308bdd24823f9d8f03fe0cc86fd46f",
+    "dependencies": [
+        {
+            "name": "freetype",
+            "default-features": false
+        },
+        "glew",
+        "glm",
+        "gettext",
+        "libiconv",
+        "libogg",
+        "libpng",
+        {
+            "name": "libsndfile",
+            "default-features": false,
+            "features": [ "external-libs" ]
+        },
+        "libvorbis",
+        "openal-soft",
+        "opus",
+        "physfs",
+        "sdl2",
+        {
+            "name": "sdl2-image",
+            "default-features": false
+        },
+        {
+            "name": "sdl2-ttf",
+            "default-features": false
+        },
+        "zlib"
+    ],
+    "overrides": [
+        {
+            "name": "zlib", "version": "1.2.13"
+        },
+        {
+            "name": "libiconv", "version": "1.17"
+        },
+        {
+            "name": "physfs", "version": "3.0.2"
+        },
+        {
+            "name": "brotli", "version": "1.0.9"
+        },
+        {
+            "name": "openal-soft", "version": "1.23.0"
+        }
+    ]
+}

@@ -1,0 +1,111 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 21,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "CI",
+            "description": "Base configuration for CI pipeline",
+            "hidden": true,
+            "binaryDir": "${sourceDir}/build",
+            "installDir": "${sourceDir}/install"
+        },
+        {
+            "name": "Windows-CI",
+            "description": "Windows configuration for CI pipeline",
+            "generator": "Ninja",
+            "inherits": ["CI"],
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "cl.exe",
+                "CMAKE_CXX_COMPILER": "cl.exe",
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "COLOBOT_MSVC_STATIC_RUNTIME": true,
+                "CBOT_STATIC": true,
+                "GLEW_STATIC": true,
+                "SNDFILE_STATIC": true,
+                "PORTABLE_SAVES": true,
+                "PORTABLE": true,
+                "TOOLS": true,
+                "TESTS": true,
+                "DESKTOP": true,
+                "CMAKE_MAKE_PROGRAM": "ninja.exe"
+            }
+        },
+        {
+            "name": "Linux-CI-base",
+            "description": "Linux configuration for CI pipeline",
+            "inherits": ["CI"],
+            "cacheVariables": {
+                "CMAKE_SKIP_INSTALL_RPATH": true,
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "COLOBOT_APPIMAGE_BASEPATH_OVERRIDE": true,
+                "CBOT_STATIC": true,
+                "PORTABLE_SAVES": true,
+                "PORTABLE": true,
+                "TOOLS": true,
+                "TESTS": true,
+                "DESKTOP": true
+            }
+        },
+        {
+            "name": "Linux-CI-gcc",
+            "inherits": ["Linux-CI-base"],
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_CXX_COMPILER": "g++",
+                "CMAKE_CXX_FLAGS": "-Werror"
+            }
+        },
+        {
+            "name": "Linux-CI-clang",
+            "inherits": ["Linux-CI-base"],
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
+            "name": "MacOS-CI",
+            "description": "MacOS configuration for CI pipeline",
+            "inherits": ["CI"],
+            "cacheVariables": {
+                "CMAKE_SKIP_INSTALL_RPATH": true,
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "PORTABLE_SAVES": true,
+                "PORTABLE": true,
+                "TESTS": true,
+                "DESKTOP": true,
+                "OPENAL_LIBRARY": "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/OpenAL.framework/OpenAL.tbd"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "Windows-CI",
+            "jobs": 4,
+            "configurePreset": "Windows-CI",
+            "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "Linux-CI-gcc",
+            "jobs": 4,
+            "configurePreset": "Linux-CI-gcc",
+            "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "Linux-CI-clang",
+            "jobs": 4,
+            "configurePreset": "Linux-CI-clang",
+            "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "MacOS-CI",
+            "jobs": 4,
+            "configurePreset": "MacOS-CI",
+            "configuration": "RelWithDebInfo"
+        }
+    ]
+}

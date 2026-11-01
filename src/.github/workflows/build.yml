@@ -1,0 +1,239 @@
+name: Build
+
+on: [push, pull_request]
+
+jobs:
+  build-linux:
+    runs-on: ${{ matrix.host_os }}
+    container: ${{ matrix.container }}
+    strategy:
+      matrix:
+        include:
+          - host_os: ubuntu-22.04
+            container: ''
+            preset: Linux-CI-gcc
+            artifact-tag: ubuntu-22.04-gcc
+          - host_os: ubuntu-22.04
+            container: 'debian:unstable-slim'
+            preset: Linux-CI-gcc
+            artifact-tag: debian-unstable-gcc
+          - host_os: ubuntu-22.04
+            container: 'debian:testing-slim'
+            preset: Linux-CI-gcc
+            artifact-tag: debian-testing-gcc
+          - host_os: ubuntu-22.04
+            container: ''
+            preset: Linux-CI-clang
+            artifact-tag: ubuntu-22.04-clang
+          - host_os: ubuntu-24.04
+            container: ''
+            preset: Linux-CI-gcc
+            artifact-tag: ubuntu-24.04-gcc
+      fail-fast: false
+    env:
+      # Actions run as root in-container, as normal user outside
+      SUDO: ${{ matrix.container == '' && 'sudo' || '' }}
+      # Shortcuts the autodetection
+      DEBIAN_FRONTEND: noninteractive
+      # Only build the appImage
+      APPIMAGE: ${{ matrix.artifact-tag == 'ubuntu-22.04-gcc' }}
+    steps:
+    - name: Install various indirect dependencies in slim containers
+      run: $SUDO apt-get update && $SUDO apt-get install -y --no-install-recommends git ca-certificates wget
+      if: matrix.container != ''
+    - name: Install Colobot dependencies
+      run: $SUDO apt-get update && $SUDO apt-get install -y --no-install-recommends build-essential cmake libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libsndfile1-dev libvorbis-dev libogg-dev libpng-dev libglew-dev libopenal-dev libphysfs-dev gettext po4a vorbis-tools librsvg2-bin xmlstarlet libglm-dev libmpg123-dev
+    - name: Install clang
+      run: $SUDO apt-get update && $SUDO apt-get install -y --no-install-recommends clang
+      if: matrix.preset == 'Linux-CI-clang'
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+    - name: Install recent libgtest-dev and nlohmann-json3-dev to replace the local submodules
+      run: $SUDO apt-get update && $SUDO apt-get install -y --no-install-recommends libgtest-dev nlohmann-json3-dev && rm -Rf lib/googletest lib/json
+      if: matrix.container != '' || matrix.host_os == 'ubuntu-22.04'
+    - name: Create build directory
+      run: cmake -E make_directory build
+    - name: Run CMake (for Linux)
+      run: cmake --preset ${{ matrix.preset }}
+    - name: Build
+      run: cmake --build --preset ${{ matrix.preset }}
+    - name: Install
+      run: cmake --build --preset ${{ matrix.preset }} --target install
+    - name: Patch library path to prepare for appimage
+      run: patchelf --set-rpath '.' install/colobot
+      if: ${{ env.APPIMAGE == true }}
+    - name: Upload build
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact-tag }}-debug
+        path: install
+      if: ${{ env.APPIMAGE == true }}
+    - name: Create AppImage
+      working-directory: build
+      run: |
+        # Download app image tool
+        wget -N https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+        chmod +x linuxdeploy-x86_64.AppImage
+        ./linuxdeploy-x86_64.AppImage --appimage-extract
+        
+        # Create AppImage
+        NO_STRIP=1 ./squashfs-root/AppRun -e colobot --output appimage --appdir colobot.AppDir -d desktop/colobot.desktop -i ../desktop/colobot.svg
+        chmod +x Colobot-x86_64.AppImage
+        
+        # Prepare folder for zip
+        mkdir -p appimage
+        cp -rp ../install/data appimage/data
+        cp -rp ../install/lang appimage/lang
+        cp -p Colobot-x86_64.AppImage appimage/colobot
+      if: ${{ env.APPIMAGE == true }}
+    - name: Upload AppImage
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact-tag }}-debug-AppImage
+        path: build/appimage
+      if: ${{ env.APPIMAGE == true }}
+    - name: Run tests
+      # TODO: Maybe run Windows tests using wine as well?
+      working-directory: build
+      run: ./Colobot-UnitTests --gtest_output=xml:gtestresults.xml
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      with:
+        name: Test results (${{ matrix.artifact-tag }})
+        path: build/gtestresults.xml
+  build-macos:
+    runs-on: ${{ matrix.host_os }}
+    container: ${{ matrix.container }}
+    strategy:
+      matrix:
+        target_os: [macos]
+        host_os: [macos-14, macos-15]
+        container: ['']
+      fail-fast: false
+    steps:
+    - name: Install Colobot dependencies
+      run: brew install cmake sdl2 sdl2_image sdl2_ttf glew physfs flac libsndfile libvorbis vorbis-tools gettext libicns librsvg wget xmlstarlet glm
+      if: matrix.container == ''
+    - uses: actions/checkout@v3
+    - name: Checkout the Google Test submodule
+      run: git submodule update --init -- lib/googletest
+    - name: Checkout the nlohmann json submodule
+      run: git submodule update --init -- lib/json
+    - name: Create build directory
+      run: cmake -E make_directory build
+    - name: Run CMake (for Mac)
+      run: cmake --preset MacOS-CI
+      if: matrix.target_os == 'macos'
+    - name: Build
+      run: cmake --build --preset MacOS-CI
+    - name: Run tests
+      # TODO: Maybe run Windows tests using wine as well?
+      working-directory: build
+      run: ./Colobot-UnitTests --gtest_output=xml:gtestresults.xml
+      if: matrix.target_os == 'macos'
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      with:
+        name: Test results (${{ matrix.target_os }}, ${{ matrix.host_os }})
+        path: build/gtestresults.xml
+      if: matrix.target_os == 'macos'
+  build-windows:
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            vcpkg_triplet: 'x64-windows-static'
+          - arch: x86
+            vcpkg_triplet: 'x86-windows-static'
+    steps:
+    - uses: actions/checkout@v3
+    - name: Checkout the Google Test submodule
+      run: git submodule update --init -- lib/googletest
+    - name: Checkout the nlohmann json submodule
+      run: git submodule update --init -- lib/json
+    - name: Install Ninja
+      uses: seanmiddleditch/gha-setup-ninja@master
+    - name: Setup VS Environment
+      uses: seanmiddleditch/gha-setup-vsdevenv@master
+      with:
+        arch: ${{ matrix.arch }}
+    - name: Install Colobot dependencies
+      uses: lukka/run-vcpkg@v7
+      with:
+        setupOnly: true
+        vcpkgGitCommitId: 'b322364f06308bdd24823f9d8f03fe0cc86fd46f'
+        vcpkgTriplet: ${{ matrix.vcpkg_triplet }}
+        # SHA-256 hash of the vcpkg.json file, recalculated automatically when it changes
+        appendedCacheKey: ${{ hashFiles( '**/vcpkg.json' ) }}
+        additionalCachedPaths: ${{ github.workspace }}/build/vcpkg_installed
+    - name: Install external tools
+      working-directory: ${{ github.workspace }}
+      run: |
+        echo "Downloading gettext..."
+        (New-Object System.Net.WebClient).DownloadFile("https://github.com/mlocati/gettext-iconv-windows/releases/download/v0.20.2-v1.16/gettext0.20.2-iconv1.16-static-64.zip", "gettext.zip");
+        echo "Unpacking gettext..."
+        7z x -ogettext gettext.zip;
+        echo "Adding gettext to PATH..."
+        echo "${{ github.workspace }}\gettext\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        echo "Downloading xmlstarlet..."
+        (New-Object System.Net.WebClient).DownloadFile("https://downloads.sourceforge.net/project/xmlstar/xmlstarlet/1.6.1/xmlstarlet-1.6.1-win32.zip", "xmlstarlet.zip");
+        echo "Unpacking xmlstarlet..."
+        7z x -oxmlstarlet xmlstarlet.zip;
+        echo "Renaming xml.exe to xmlstarlet.exe"
+        Rename-Item -Path "${{ github.workspace }}\xmlstarlet\xmlstarlet-1.6.1\xml.exe" -NewName "xmlstarlet.exe"
+        echo "Adding xmlstarlet to PATH..."
+        echo "${{ github.workspace }}\xmlstarlet\xmlstarlet-1.6.1" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        echo "Downloading rsvg-convert..."
+        (New-Object System.Net.WebClient).DownloadFile("https://downloads.sourceforge.net/project/tumagcc/rsvg-convert-2.40.20.7z", "rsvg-convert.zip");
+        echo "Unpacking xmlstarlet..."
+        7z x -orsvg-convert rsvg-convert.zip;
+        echo "Adding rsvg-convert to PATH..."
+        echo "${{ github.workspace }}\rsvg-convert" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      shell: pwsh
+    - name: Create build directory
+      run: cmake -E make_directory build
+    - name: Run CMake (for Windows)
+      run: cmake --preset Windows-CI -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}\scripts\buildsystems\vcpkg.cmake
+    - name: Build
+      run: |
+        $nproc = (Get-CIMInstance -Class 'CIM_Processor').NumberOfLogicalProcessors
+        cmake --build --preset Windows-CI -j $nproc
+      shell: pwsh
+    - name: Install
+      run: cmake --build --preset Windows-CI --target install
+    - name: Upload build
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-msvc-debug-${{ matrix.arch }}
+        path: install
+    - name: Run tests
+      working-directory: build
+      run: ./Colobot-UnitTests --gtest_output=xml:gtestresults.xml
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      with:
+        name: 'Test results (windows, MSVC, ${{ matrix.arch }})'
+        path: build/gtestresults.xml
+  doc:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install Colobot dependencies
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential cmake libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libsndfile1-dev libvorbis-dev libogg-dev libpng-dev libglew-dev libopenal-dev libphysfs-dev gettext git po4a vorbis-tools librsvg2-bin xmlstarlet doxygen graphviz libglm-dev libmpg123-dev
+    - uses: actions/checkout@v3
+    - name: Create build directory
+      run: cmake -E make_directory build
+    - name: Checkout the nlohmann json submodule
+      run: git submodule update --init -- lib/json
+    - name: Run CMake
+      working-directory: build
+      run: cmake ..
+    - name: Build docs
+      working-directory: build
+      run: make doc
+    - name: Upload docs
+      uses: actions/upload-artifact@v4
+      with:
+        name: doc
+        path: build/doc

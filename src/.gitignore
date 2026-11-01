@@ -1,0 +1,58 @@
+# Ignore the CMake build files
+CMakeFiles
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+/install_manifest.txt
+/Testing
+/CTestTestfile.cmake
+/CPackConfig.cmake
+/CPackSourceConfig.cmake
+/src/libcolobotbase.a
+
+# Ignore executable
+colobot.exe
+colobot
+log.txt
+
+# Ignore the generated documentation
+CMakeDoxyfile.in
+CMakeDoxygenDefaults.cmake
+/doc
+/Doxyfile
+
+# Ignore targets
+/src/CBot/libCBot.so
+
+# Ignore local data
+/colobot.ini
+/saves
+
+# Standard build directory
+/build*
+
+# Ignore KDevelop files
+.kdev4
+*.kdev4
+
+# Ignore gedit temp files
+*~
+
+# Ignore QtCreator temp files
+CMakeLists.txt.user
+CMakeLists.txt.user.*
+
+# Ignore Visual Studio Code files
+/.vscode
+*.code-workspace
+
+# Ignore CLion files
+/.idea
+
+# Ignore Visual Studio files
+/CMakeSettings.json
+/.vs
+/out
+
+# Ignore CMakeUserPresets.json
+CMakeUserPresets.json
