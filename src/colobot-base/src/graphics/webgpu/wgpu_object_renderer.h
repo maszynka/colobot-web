@@ -19,10 +19,10 @@
 
 /**
  * \file graphics/webgpu/wgpu_object_renderer.h
- * \brief WebGPU object renderer - STUB from WP4, implemented by WP9
+ * \brief WebGPU object renderer (WP9), port of CGL33ObjectRenderer
  *
- * Compiles, keeps state, draws nothing. Follow docs/webgpu-renderer-guide.md;
- * WP9 edits only this file, wgpu_object_renderer.cpp and shaders/object.wgsl.
+ * group(0) shared scene, group(1) Uniforms (ring-allocated, dynamic offset),
+ * group(2) albedo/detail/emissive/material textures + samplers.
  */
 
 #pragma once
@@ -38,10 +38,15 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
+#include <map>
+#include <vector>
+
 namespace Gfx
 {
 
 class CWebGPUDevice;
+struct PipelineKey;
 
 class CWebGPUObjectRenderer : public CObjectRenderer
 {
@@ -81,12 +86,66 @@ public:
     void DrawPrimitives(PrimitiveType type, int drawCount, int count[], const Vertex3D* vertices) override;
 
 private:
+    //! WGSL mirror: struct ObjectUniforms (shaders/object.wgsl), 384 bytes
+    struct alignas(16) Uniforms
+    {
+        glm::mat4 projection = glm::mat4(1.0f);
+        glm::mat4 view = glm::mat4(1.0f);
+        glm::mat4 model = glm::mat4(1.0f);
+        glm::mat4 normalMatrix = glm::mat4(1.0f);
+        glm::vec4 albedoColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+        glm::vec3 emissiveColor = { 0.0f, 0.0f, 0.0f };
+        float roughness = 1.0f;
+        glm::vec3 recolorFrom = { 0.0f, 0.0f, 0.0f };
+        float metalness = 0.0f;
+        glm::vec3 recolorTo = { 0.0f, 0.0f, 0.0f };
+        float aoStrength = 0.0f;
+        glm::vec3 fogColor = { 0.0f, 0.0f, 0.0f };
+        float recolorThreshold = 0.0f;
+        glm::vec2 fogRange = { 1e+6f, 1e+6f };
+        glm::vec2 uvOffset = { 0.0f, 0.0f };
+        glm::vec2 uvScale = { 1.0f, 1.0f };
+        float alphaScissor = 0.0f;
+        float triplanarScale = 1.0f;
+        uint32_t triplanarMode = 0;
+        uint32_t recolor = 0;
+        uint32_t pad0 = 0;
+        uint32_t pad1 = 0;
+    };
+    static_assert(sizeof(Uniforms) == 384, "Uniforms must match WGSL ObjectUniforms");
+
+    enum TextureSlot { ALBEDO = 0, DETAIL, EMISSIVE, MATERIAL, SLOT_COUNT };
+
+    Uniforms& U() { m_uniformsDirty = true; return m_uniforms; }
+    void SetSlot(TextureSlot slot, unsigned int id);
+    wgpu::RenderPipeline CreatePipeline(const PipelineKey& key);
+    //! Sets pipeline + all bind groups; false when the draw must be skipped
+    bool Prepare(wgpu::RenderPassEncoder& pass, wgpu::PrimitiveTopology topology);
+    void BindUniforms(wgpu::RenderPassEncoder& pass);
+    void BindTextures(wgpu::RenderPassEncoder& pass);
+
     CWebGPUDevice* m_device;
     wgpu::ShaderModule m_shader;
     CWebGPUSceneBindings m_scene;   //!< group(0)
-    glm::mat4 m_projectionMatrix = glm::mat4(1.0f);
-    glm::mat4 m_viewMatrix = glm::mat4(1.0f);
-    glm::mat4 m_modelMatrix = glm::mat4(1.0f);
+
+    wgpu::BindGroupLayout m_uniformLayout;
+    wgpu::BindGroupLayout m_textureLayout;
+    wgpu::PipelineLayout m_pipelineLayout;
+
+    Uniforms m_uniforms;
+    bool m_uniformsDirty = true;
+    uint64_t m_uniformFrame = UINT64_MAX;
+    uint32_t m_uniformOffset = 0;
+    wgpu::Buffer m_uniformBuffer;
+    wgpu::BindGroup m_uniformGroup;
+    WGPUBuffer m_uniformGroupBuffer = nullptr;
+
+    std::array<unsigned int, SLOT_COUNT> m_textures = {};
+    uint64_t m_textureEpoch = UINT64_MAX;
+    std::map<std::array<uint64_t, SLOT_COUNT>, wgpu::BindGroup> m_textureGroups;
+
+    std::vector<Vertex3D> m_converted;
+    std::vector<int> m_counts;
 };
 
 } // namespace Gfx
