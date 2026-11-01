@@ -39,7 +39,12 @@ CRobotMain* CController::GetRobotMain()
 
 void CController::StartApp()
 {
+#ifdef __EMSCRIPTEN__
+    // Web (WP13): skip the 3 x 3 s welcome splash; it delays the menu and swallows the first click.
+    m_main->ChangePhase(PHASE_PLAYER_SELECT);
+#else
     m_main->ChangePhase(PHASE_WELCOME1);
+#endif
 }
 
 void CController::StartGame(LevelCategory cat, int chap, int lvl)
