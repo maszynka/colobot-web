@@ -57,6 +57,7 @@ if(EMSCRIPTEN)
 endif()
 
 add_subdirectory(src)
+include(cmake/web_fs.cmake)
 
 if(EMSCRIPTEN)
     target_sources(colobot PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/web/src/web_frame.cpp")

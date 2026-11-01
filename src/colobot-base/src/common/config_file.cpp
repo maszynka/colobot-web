@@ -27,6 +27,10 @@
 
 #include "common/system/system.h"
 
+#ifdef __EMSCRIPTEN__
+#include "common/resources/web_archiver.h"
+#endif
+
 #include <memory>
 #include <utility>
 #include <cstring>
@@ -123,6 +127,9 @@ bool CConfigFile::Save()
             GetLogger()->Error("Error on storing config file: %%", e.what());
             return false;
         }
+#ifdef __EMSCRIPTEN__
+        web_save_sync();
+#endif
     }
     return true;
 }

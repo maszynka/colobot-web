@@ -31,6 +31,10 @@
 
 #include <filesystem>
 
+#ifdef __EMSCRIPTEN__
+#include "common/resources/web_archiver.h"
+#endif
+
 CPathManager::CPathManager(CSystemUtils* systemUtils)
     : m_dataPath(systemUtils->GetDataPath())
     , m_langPath(systemUtils->GetLangPath())
@@ -75,6 +79,13 @@ const std::filesystem::path& CPathManager::GetSavePath() const
 
 std::string CPathManager::VerifyPaths() const
 {
+#ifdef __EMSCRIPTEN__
+    // Data comes from boot.pak + lazy manifest archiver (mounted in InitPaths); saves live in IDBFS.
+    web_fs_mount_save();
+    std::filesystem::create_directories(m_savePath);
+    std::filesystem::create_directories(m_savePath / "mods");
+    return "";
+#endif
     if (! (std::filesystem::exists(m_dataPath) && std::filesystem::is_directory(m_dataPath)) )
     {
         GetLogger()->Error("Data directory '%%' doesn't exist or is not a directory", m_dataPath);
@@ -109,7 +120,12 @@ void CPathManager::InitPaths()
             GetLogger()->Info("  * %%", modSearchDir);
     }
 
+#ifdef __EMSCRIPTEN__
+    if (!web_fs_mount_data())
+        GetLogger()->Error("Failed to mount web data (boot.pak / manifest.json)");
+#else
     CResourceManager::AddLocation(m_dataPath);
+#endif
     CResourceManager::SetSaveLocation(m_savePath);
     CResourceManager::AddLocation(m_savePath);
 
