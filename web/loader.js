@@ -18,23 +18,19 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
-async function fetchProgress(url, onBytes, wasm) {
+// Progress is read from a clone so the original native Response goes to
+// WebAssembly.instantiateStreaming untouched (streaming compile + code cache work; a JS-wrapped
+// stream defeated both).
+async function fetchProgress(url, onBytes) {
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(url + ': HTTP ' + resp.status);
   const total = +resp.headers.get('content-length') || 0;
-  let got = 0;
-  const reader = resp.body.getReader();
-  const stream = new ReadableStream({
-    async pull(ctl) {
-      const { done, value } = await reader.read();
-      if (done) { ctl.close(); return; }
-      got += value.length; onBytes(got, total); ctl.enqueue(value);
-    },
-    cancel(r) { return reader.cancel(r); },
-  });
-  const headers = new Headers(resp.headers);
-  if (wasm) headers.set('content-type', 'application/wasm');
-  return new Response(stream, { status: 200, headers });
+  const reader = resp.clone().body.getReader();
+  (async () => {
+    let got = 0;
+    for (;;) { const { done, value } = await reader.read(); if (done) break; got += value.length; onBytes(got, total); }
+  })().catch(() => {});
+  return resp;
 }
 
 function fail(e) {
@@ -58,9 +54,13 @@ async function main() {
 
   // Start everything in parallel.
   const factoryP = import('./colobot.js');
-  const wasmRespP = fetchProgress('colobot.wasm', (g, t) => { progress.wasm = [g, t || g + 1]; update(); }, true);
-  const pakP = fetchProgress('data/boot.pak', (g, t) => { progress.pak = [g, t || g + 1]; update(); })
-    .then((r) => r.arrayBuffer());
+  const wasmRespP = fetchProgress('colobot.wasm', (g, t) => { progress.wasm = [g, t || g + 1]; update(); });
+  // boot.pak.gz (gzip, inflated here: .pak is octet-stream, which the CDN does not compress);
+  // falls back to the raw pack.
+  const onPak = (g, t) => { progress.pak = [g, t || g + 1]; update(); };
+  const pakP = fetchProgress('data/boot.pak.gz', onPak)
+    .then((r) => new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer())
+    .catch(() => fetchProgress('data/boot.pak', onPak).then((r) => r.arrayBuffer()));
   const manifestP = fetch('data/manifest.json').then((r) => r.json());
   wasmRespP.catch(() => {}); pakP.catch(() => {}); manifestP.catch(() => {});
 
@@ -124,8 +124,11 @@ async function main() {
     if (!busy && !document.hidden) {
       busy = true;
       try {
+        const f0 = performance.now();
         const r = await Module._colobot_frame();
+        const dt = performance.now() - f0;
         window.__colobotFrames = (window.__colobotFrames || 0) + 1;
+        if (dt > 50) (window.__colobotLongFrames = window.__colobotLongFrames || []).push([Math.round(f0), Math.round(dt)]);
         if (r === 0) { stopped = true; return; }
       } catch (e) { stopped = true; fail(e); return; }
       finally { busy = false; }
@@ -133,6 +136,15 @@ async function main() {
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
+
+  // Prefetch likely next data at low priority once the menu is idle: the packs every level
+  // needs (models, common). Music is fetched in the background by CALSound (web_fs_ready).
+  const prefetch = () => {
+    const c = Module.colobotFS;
+    if (!c || !c.prefetch || navigator.connection && navigator.connection.saveData) return;
+    for (const k of ['pack:models', 'pack:common']) if (c.manifest.packs[k.slice(5)]) c.prefetch(k, true);
+  };
+  setTimeout(() => (window.requestIdleCallback || setTimeout)(prefetch, { timeout: 5000 }), 3000);
 }
 
 main().catch(fail);

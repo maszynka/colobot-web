@@ -5,6 +5,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Colobot</title>
+<!-- Start the critical downloads with the HTML instead of after loader.js runs (WP13). -->
+<link rel="modulepreload" href="loader.js">
+<link rel="modulepreload" href="colobot.js">
+<link rel="preload" href="colobot.wasm" as="fetch" type="application/wasm" crossorigin>
+<link rel="preload" href="data/boot.pak.gz" as="fetch" crossorigin>
+<link rel="preload" href="data/manifest.json" as="fetch" crossorigin>
 <style>
 html,body{margin:0;height:100%;background:#0b0f14;color:#dfe6ee;font:15px system-ui,sans-serif;overflow:hidden}
 #canvas{display:block;width:100vw;height:100vh;outline:0;touch-action:none}
