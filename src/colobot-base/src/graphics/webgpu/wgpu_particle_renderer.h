@@ -19,7 +19,7 @@
 
 /**
  * \file graphics/webgpu/wgpu_particle_renderer.h
- * \brief WebGPU particle renderer - STUB from WP4, implemented by WP10
+ * \brief WebGPU particle renderer
  *
  * Compiles, keeps state, draws nothing. Follow docs/webgpu-renderer-guide.md;
  * WP10 edits only this file, wgpu_particle_renderer.cpp and shaders/particle.wgsl.
@@ -35,7 +35,13 @@
 
 #include <webgpu/webgpu_cpp.h>
 
+#include "graphics/webgpu/wgpu_pipeline_cache.h"
+
 #include <glm/glm.hpp>
+
+#include <cstdint>
+#include <unordered_map>
+#include <vector>
 
 namespace Gfx
 {
@@ -59,11 +65,38 @@ public:
     void DrawParticle(PrimitiveType type, int count, const VertexParticle* vertices) override;
 
 private:
+    struct Uniforms
+    {
+        glm::mat4 mvp;
+        glm::vec4 color;
+    };
+
+    wgpu::RenderPipeline CreatePipeline(const PipelineKey& key);
+    void BindUniforms(wgpu::RenderPassEncoder& pass);
+    void BindTexture(wgpu::RenderPassEncoder& pass);
+
     CWebGPUDevice* m_device;
     wgpu::ShaderModule m_shader;
+    wgpu::BindGroupLayout m_uniformLayout;
+    wgpu::BindGroupLayout m_textureLayout;
+    wgpu::PipelineLayout m_pipelineLayout;
     glm::mat4 m_projectionMatrix = glm::mat4(1.0f);
-    glm::mat4 m_viewMatrix = glm::mat4(1.0f);
+    glm::mat4 m_viewMatrix = glm::mat4(1.0f);   //!< with GL z flip applied
     glm::mat4 m_modelMatrix = glm::mat4(1.0f);
+    glm::vec4 m_color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    unsigned int m_texture = 0;
+
+    bool m_uniformsDirty = true;
+    uint64_t m_uniformFrame = ~0ull;
+    uint32_t m_uniformOffset = 0;
+    wgpu::Buffer m_uniformBuffer;
+    wgpu::BindGroup m_uniformGroup;
+    WGPUBuffer m_uniformGroupBuffer = nullptr;
+
+    uint64_t m_textureEpoch = ~0ull;
+    std::unordered_map<uint64_t, wgpu::BindGroup> m_textureGroups;
+
+    std::vector<VertexParticle> m_converted;
 };
 
 } // namespace Gfx

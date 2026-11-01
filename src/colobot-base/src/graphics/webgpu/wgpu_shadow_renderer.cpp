@@ -29,8 +29,82 @@
 
 #include "wgsl_sources.h"
 
-// STUB (WP4): state is stored, nothing is drawn. WP10 replaces the bodies; see docs/webgpu-renderer-guide.md.
-#pragma clang diagnostic ignored "-Wunused-parameter"
+#include <cstddef>
+
+namespace Gfx
+{
+
+static wgpu::BindGroupLayout MakeUniformLayout(const wgpu::Device& dev, const char* label, uint64_t size)
+{
+    wgpu::BindGroupLayoutEntry entry;
+    entry.binding = 0;
+    entry.visibility = wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment;
+    entry.buffer.type = wgpu::BufferBindingType::Uniform;
+    entry.buffer.hasDynamicOffset = true;
+    entry.buffer.minBindingSize = size;
+    wgpu::BindGroupLayoutDescriptor desc;
+    desc.label = label;
+    desc.entryCount = 1;
+    desc.entries = &entry;
+    return dev.CreateBindGroupLayout(&desc);
+}
+
+static wgpu::BindGroupLayout MakeTextureLayout(const wgpu::Device& dev, const char* label)
+{
+    wgpu::BindGroupLayoutEntry entries[2];
+    entries[0].binding = 0;
+    entries[0].visibility = wgpu::ShaderStage::Fragment;
+    entries[0].texture.sampleType = wgpu::TextureSampleType::Float;
+    entries[0].texture.viewDimension = wgpu::TextureViewDimension::e2D;
+    entries[1].binding = 1;
+    entries[1].visibility = wgpu::ShaderStage::Fragment;
+    entries[1].sampler.type = wgpu::SamplerBindingType::Filtering;
+    wgpu::BindGroupLayoutDescriptor desc;
+    desc.label = label;
+    desc.entryCount = 2;
+    desc.entries = entries;
+    return dev.CreateBindGroupLayout(&desc);
+}
+
+static wgpu::BindGroup GetTextureGroup(CWebGPUDevice* device, const wgpu::BindGroupLayout& layout,
+                                       std::unordered_map<uint64_t, wgpu::BindGroup>& cache, uint64_t& epoch, unsigned int id)
+{
+    CWebGPUTextureManager& textures = device->Textures();
+    if (epoch != textures.Epoch())
+    {
+        cache.clear();
+        epoch = textures.Epoch();
+    }
+    const WebGPUTextureEntry& tex = textures.Get(id);
+    auto it = cache.find(tex.serial);
+    if (it != cache.end()) return it->second;
+    wgpu::BindGroupEntry entries[2];
+    entries[0].binding = 0;
+    entries[0].textureView = tex.view;
+    entries[1].binding = 1;
+    entries[1].sampler = tex.sampler;
+    wgpu::BindGroupDescriptor desc;
+    desc.layout = layout;
+    desc.entryCount = 2;
+    desc.entries = entries;
+    wgpu::BindGroup group = device->GetWGPUDevice().CreateBindGroup(&desc);
+    cache[tex.serial] = group;
+    return group;
+}
+
+static wgpu::PipelineLayout MakePipelineLayout(CWebGPUDevice* device, const char* label,
+                                               const wgpu::BindGroupLayout& g1, const wgpu::BindGroupLayout& g2)
+{
+    wgpu::BindGroupLayout layouts[3] = { device->EmptyBindGroupLayout(), g1, g2 };
+    wgpu::PipelineLayoutDescriptor desc;
+    desc.label = label;
+    desc.bindGroupLayoutCount = 3;
+    desc.bindGroupLayouts = layouts;
+    return device->GetWGPUDevice().CreatePipelineLayout(&desc);
+}
+
+} // namespace Gfx
+using namespace Gfx;
 
 namespace Gfx
 {
@@ -38,8 +112,12 @@ namespace Gfx
 CWebGPUShadowRenderer::CWebGPUShadowRenderer(CWebGPUDevice* device)
     : m_device(device)
 {
-    GetLogger()->Info("Creating CWebGPUShadowRenderer (stub)");
-    m_shader = CreateShaderModule(m_device->GetWGPUDevice(), "shadow", { WGSL::preamble, WGSL::shadow_pass });
+    GetLogger()->Info("Creating CWebGPUShadowRenderer");
+    const wgpu::Device& dev = m_device->GetWGPUDevice();
+    m_shader = CreateShaderModule(dev, "shadow", { WGSL::preamble, WGSL::shadow_pass });
+    m_uniformLayout = MakeUniformLayout(dev, "shadow-group1", sizeof(glm::mat4));
+    m_textureLayout = MakeTextureLayout(dev, "shadow-group2");
+    m_pipelineLayout = MakePipelineLayout(m_device, "shadow-layout", m_uniformLayout, m_textureLayout);
 }
 
 CWebGPUShadowRenderer::~CWebGPUShadowRenderer() = default;
@@ -82,7 +160,9 @@ void CWebGPUShadowRenderer::SetProjectionMatrix(const glm::mat4& matrix)
 
 void CWebGPUShadowRenderer::SetViewMatrix(const glm::mat4& matrix)
 {
-    m_viewMatrix = matrix;
+    glm::mat4 scale(1.0f);
+    scale[2][2] = -1.0f;
+    m_viewMatrix = scale * matrix;
 }
 
 void CWebGPUShadowRenderer::SetModelMatrix(const glm::mat4& matrix)
@@ -92,7 +172,7 @@ void CWebGPUShadowRenderer::SetModelMatrix(const glm::mat4& matrix)
 
 void CWebGPUShadowRenderer::SetTexture(const Texture& texture)
 {
-    // TODO(WP10)
+    m_texture = texture.id;
 }
 
 void CWebGPUShadowRenderer::SetShadowMap(const Texture& texture)
@@ -110,10 +190,78 @@ void CWebGPUShadowRenderer::SetShadowRegion(const glm::vec2& offset, const glm::
                                    static_cast<int>(scale.x * m_shadowMapSize.x), static_cast<int>(scale.y * m_shadowMapSize.y));
 }
 
+wgpu::RenderPipeline CWebGPUShadowRenderer::CreatePipeline(const PipelineKey& key)
+{
+    wgpu::VertexAttribute attributes[2];
+    attributes[0].format = wgpu::VertexFormat::Float32x3;
+    attributes[0].offset = offsetof(Vertex3D, position);
+    attributes[0].shaderLocation = 0;
+    attributes[1].format = wgpu::VertexFormat::Float32x2;
+    attributes[1].offset = offsetof(Vertex3D, uv);
+    attributes[1].shaderLocation = 1;
+
+    wgpu::VertexBufferLayout vbLayout;
+    vbLayout.arrayStride = sizeof(Vertex3D);
+    vbLayout.attributeCount = 2;
+    vbLayout.attributes = attributes;
+
+    wgpu::RenderPipelineDescriptor desc;
+    desc.label = key.variant ? "shadow-alpha" : "shadow";
+    desc.layout = m_pipelineLayout;
+    desc.vertex.module = m_shader;
+    desc.vertex.entryPoint = "vs_main";
+    desc.vertex.bufferCount = 1;
+    desc.vertex.buffers = &vbLayout;
+
+    CWebGPUDevice::FixedFunction ff;
+    m_device->FillFixedFunction(key, desc, ff);
+    ff.fragment.module = m_shader;
+    ff.fragment.entryPoint = "fs_alpha";
+    if (key.variant != 0) desc.fragment = &ff.fragment;   // zero color targets, discard only
+
+    return m_device->GetWGPUDevice().CreateRenderPipeline(&desc);
+}
+
 void CWebGPUShadowRenderer::DrawObject(const CVertexBuffer* buffer, bool transparent)
 {
-    // TODO(WP10): pipeline with RendererId::Shadow, key.colorFormat = 0, key.depthBias = 8,
-    // key.depthBiasSlopeScale = 2.0f (gl33 glPolygonOffset(2, 8)); alpha-tested variant when transparent.
+    if (!m_active) return;
+    auto b = dynamic_cast<const CWebGPUVertexBuffer*>(buffer);
+    if (b == nullptr || b->GetGPUVertexCount() == 0 || !b->GetGPUBuffer()) return;
+
+    wgpu::RenderPassEncoder* pass = m_device->Passes().GetPass();
+    if (pass == nullptr) return;
+
+    glm::mat4 mvp = m_projectionMatrix * m_viewMatrix * m_modelMatrix;
+    RingAllocation a = m_device->UniformRing().Upload(&mvp, sizeof(mvp));
+    if (!m_uniformGroup || m_uniformGroupBuffer != a.buffer.Get())
+    {
+        wgpu::BindGroupEntry entry;
+        entry.binding = 0;
+        entry.buffer = a.buffer;
+        entry.size = sizeof(glm::mat4);
+        wgpu::BindGroupDescriptor desc;
+        desc.layout = m_uniformLayout;
+        desc.entryCount = 1;
+        desc.entries = &entry;
+        m_uniformGroup = m_device->GetWGPUDevice().CreateBindGroup(&desc);
+        m_uniformGroupBuffer = a.buffer.Get();
+    }
+    uint32_t offset = static_cast<uint32_t>(a.offset);
+
+    PipelineKey key = m_device->MakePipelineKey(RendererId::Shadow, b->GetGPUTopology());
+    key.variant = transparent ? 1 : 0;
+    key.colorFormat = 0;
+    key.depthBias = 8;                  // gl33 glPolygonOffset(2, 8): constant 8, slope 2
+    key.depthBiasSlopeScale = 2.0f;
+    const wgpu::RenderPipeline& pipeline = m_device->Pipelines().Get(key,
+        [this](const PipelineKey& k) { return CreatePipeline(k); });
+
+    pass->SetPipeline(pipeline);
+    pass->SetBindGroup(0, m_device->EmptyBindGroup());
+    pass->SetBindGroup(1, m_uniformGroup, 1, &offset);
+    pass->SetBindGroup(2, GetTextureGroup(m_device, m_textureLayout, m_textureGroups, m_textureEpoch, transparent ? m_texture : 0));
+    pass->SetVertexBuffer(0, b->GetGPUBuffer());
+    pass->Draw(b->GetGPUVertexCount(), 1, 0, 0);
 }
 
 } // namespace Gfx
