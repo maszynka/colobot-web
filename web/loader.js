@@ -61,7 +61,8 @@ async function main() {
   const wasmRespP = fetchProgress('colobot.wasm', (g, t) => { progress.wasm = [g, t || g + 1]; update(); }, true);
   const pakP = fetchProgress('data/boot.pak', (g, t) => { progress.pak = [g, t || g + 1]; update(); })
     .then((r) => r.arrayBuffer());
-  wasmRespP.catch(() => {}); pakP.catch(() => {});
+  const manifestP = fetch('data/manifest.json').then((r) => r.json());
+  wasmRespP.catch(() => {}); pakP.catch(() => {}); manifestP.catch(() => {});
 
   const canvas = $('canvas');
   const sizeCanvas = () => {
@@ -88,7 +89,10 @@ async function main() {
 
   const createColobot = (await factoryP).default;
   mod.bootPak = new Uint8Array(await pakP);
+  // WP11 contract: archiver reads Module.colobotFS before main().
+  mod.colobotFS = { baseUrl: 'data/', manifest: await manifestP, packs: { boot: mod.bootPak } };
   const Module = await createColobot(mod);
+  Module.colobotFS = mod.colobotFS;
   Module.bootPak = mod.bootPak;
   Module.dataBaseUrl = 'data/';
   window.Module = Module;
