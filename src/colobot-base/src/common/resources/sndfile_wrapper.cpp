@@ -17,6 +17,8 @@
  * along with this program. If not, see http://gnu.org/licenses
  */
 
+#ifndef __EMSCRIPTEN__ // web build uses vorbis_wav_reader
+
 #include "common/resources/sndfile_wrapper.h"
 
 #include "common/stringutils.h"
@@ -124,3 +126,5 @@ sf_count_t CSNDFileWrapper::Read(short int *ptr, sf_count_t items)
 {
     return sf_read_short(m_snd_file, ptr, items);
 }
+
+#endif // __EMSCRIPTEN__

@@ -57,6 +57,7 @@ if(EMSCRIPTEN)
 endif()
 
 add_subdirectory(src)
+include(web_sound) # WP2: stb_vorbis + vorbis_wav_reader (web only)
 
 if(EMSCRIPTEN)
     target_sources(colobot PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/web/src/web_frame.cpp")

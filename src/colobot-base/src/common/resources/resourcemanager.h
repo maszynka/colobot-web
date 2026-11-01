@@ -21,7 +21,11 @@
 
 #include "common/resources/sdl_file_wrapper.h"
 #include "common/resources/sdl_memory_wrapper.h"
+#ifdef __EMSCRIPTEN__
+#include "common/resources/vorbis_wav_reader.h"
+#else
 #include "common/resources/sndfile_wrapper.h"
+#endif
 
 #include <filesystem>
 #include <memory>
@@ -50,7 +54,11 @@ public:
 
     static std::unique_ptr<CSDLFileWrapper> GetSDLFileHandler(const std::filesystem::path& filename);
     static std::unique_ptr<CSDLMemoryWrapper> GetSDLMemoryHandler(const std::filesystem::path& filename);
+#ifdef __EMSCRIPTEN__
+    static std::unique_ptr<CVorbisWavReader> GetSNDFileHandler(const std::filesystem::path& filename);
+#else
     static std::unique_ptr<CSNDFileWrapper> GetSNDFileHandler(const std::filesystem::path& filename);
+#endif
 
     //! Check if file exists
     static bool Exists(const std::filesystem::path& filename);

@@ -26,7 +26,9 @@
 
 #include "sound/sound.h"
 
+#ifndef __EMSCRIPTEN__
 #include "common/thread/worker_thread.h"
+#endif
 
 #include "sound/oalsound/buffer.h"
 #include "sound/oalsound/channel.h"
@@ -137,5 +139,16 @@ private:
     OldMusic m_previousMusic;
     glm::vec3 m_eye;
     glm::vec3 m_lookat;
+#ifdef __EMSCRIPTEN__
+    //! No threads on web: run work inline
+    struct CInlineExecutor
+    {
+        template<typename F> void Start(F&& f) { f(); }
+    };
+    CInlineExecutor m_thread;
+    //! Sounds registered by Cache() but decoded on first Play()
+    std::map<SoundType, std::filesystem::path> m_lazySounds;
+#else
     CWorkerThread m_thread;
+#endif
 };

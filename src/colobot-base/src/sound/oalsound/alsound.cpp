@@ -96,6 +96,9 @@ void CALSound::Reset()
     m_previousMusic.music.reset();
 
     m_sounds.clear();
+#ifdef __EMSCRIPTEN__
+    m_lazySounds.clear();
+#endif
 
     m_music.clear();
 }
@@ -137,6 +140,12 @@ int CALSound::GetMusicVolume()
 
 bool CALSound::Cache(SoundType sound, const std::filesystem::path &filename)
 {
+#ifdef __EMSCRIPTEN__
+    // Lazy: decode on first Play() to avoid decoding ~all sounds at startup
+    if (m_sounds.find(sound) == m_sounds.end())
+        m_lazySounds[sound] = filename;
+    return true;
+#endif
     auto buffer = std::make_unique<CBuffer>();
     if (buffer->LoadFromFile(filename, sound))
     {
@@ -163,6 +172,10 @@ void CALSound::CacheMusic(const std::filesystem::path &filename)
 
 bool CALSound::IsCached(SoundType sound)
 {
+#ifdef __EMSCRIPTEN__
+    if (m_lazySounds.find(sound) != m_lazySounds.end())
+        return true;
+#endif
     return m_sounds.find(sound) != m_sounds.end();
 }
 
@@ -329,6 +342,20 @@ int CALSound::Play(SoundType sound, const glm::vec3 &pos, bool relativeToListene
     {
         return -1;
     }
+#ifdef __EMSCRIPTEN__
+    if (m_sounds.find(sound) == m_sounds.end())
+    {
+        auto lazy = m_lazySounds.find(sound);
+        if (lazy != m_lazySounds.end())
+        {
+            auto path = lazy->second;
+            m_lazySounds.erase(lazy);
+            auto buffer = std::make_unique<CBuffer>();
+            if (buffer->LoadFromFile(path, sound))
+                m_sounds[sound] = std::move(buffer);
+        }
+    }
+#endif
     if (m_sounds.find(sound) == m_sounds.end())
     {
         GetLogger()->Debug("Sound %% was not loaded!", sound);
