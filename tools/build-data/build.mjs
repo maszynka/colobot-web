@@ -18,8 +18,8 @@ const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf('--' + n); return i < 0 ? d : args[i + 1]; };
 const flag = (n) => args.includes('--' + n);
 const SRC = path.resolve(opt('src', path.join(root, 'upstream/colobot-data')));
-const SRC_FALLBACK = '<repo>/upstream/colobot-data';
-const src = fs.existsSync(SRC) ? SRC : SRC_FALLBACK;
+const src = SRC;
+if (!fs.existsSync(src)) { console.error(`colobot-data not found at ${src}; clone https://github.com/colobot/colobot-data there or pass --src`); process.exit(1); }
 const OUT = path.resolve(opt('out', path.join(root, 'dist/data')));
 const CACHE = path.resolve(opt('music-cache', path.join(root, '.cache/build-data')));
 const PACK_MAX = 25 * 1024 * 1024 - 64 * 1024, BOOT_MAX = 15 * 1000 * 1000;
