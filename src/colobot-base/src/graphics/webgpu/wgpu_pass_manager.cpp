@@ -93,6 +93,7 @@ wgpu::RenderPassEncoder* CWebGPUPassManager::GetPass()
     wgpu::RenderPassColorAttachment colorAttachment;
     wgpu::RenderPassDepthStencilAttachment depthAttachment;
     wgpu::RenderPassDescriptor desc;
+    desc.colorAttachmentCount = 0; // no default initializer in webgpu_cpp.h (garbage at -Oz / LTO)
 
     if (m_target.color)
     {
