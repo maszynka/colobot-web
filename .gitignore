@@ -6,3 +6,4 @@ dist/
 node_modules/
 !tools/build-data/
 .claude/
+.data-out/
