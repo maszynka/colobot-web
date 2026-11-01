@@ -22,14 +22,17 @@
 #ifdef __EMSCRIPTEN__
 
 #include "graphics/null/null_device.h"
+#include "graphics/webgpu/wgpu_device.h"
 
 namespace Gfx
 {
 
-// TODO(WP4): return CWebGPUDevice for "default"/"webgpu" once graphics/webgpu exists.
+// Web build: every name except "null" maps to WebGPU (app.cpp also asks for "opengl" as fallback)
 std::unique_ptr<CDevice> CreateDevice(const DeviceConfig &config, const std::string& name)
 {
-    return std::make_unique<CNullDevice>(config);
+    if (name == "null")
+        return std::make_unique<CNullDevice>(config);
+    return std::make_unique<CWebGPUDevice>(config);
 }
 
 } // namespace Gfx
