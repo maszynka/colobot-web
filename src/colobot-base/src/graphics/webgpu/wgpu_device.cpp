@@ -221,9 +221,18 @@ bool CWebGPUDevice::Create()
     m_capabilities.multisamplingSupported = true;
     m_capabilities.maxSamples = 4;
 
-    // Use RGBA8Unorm for the canvas (always allowed) so render targets and uploaded
-    // textures share one format and CopyTextureToTexture between them is legal.
+    // Use the canvas' preferred format (navigator.gpu.getPreferredCanvasFormat(), bgra8unorm on
+    // most platforms; capabilities list it first) to avoid a compositor copy. Offscreen color
+    // framebuffers follow SurfaceFormat(), so fb->screen copies stay legal; uploaded textures stay
+    // RGBA8Unorm (CopyFramebufferToTexture checks formats; the engine never calls it).
     m_surfaceFormat = wgpu::TextureFormat::RGBA8Unorm;
+    {
+        wgpu::SurfaceCapabilities caps;
+        if (m_surface.GetCapabilities(m_adapter, &caps) == wgpu::Status::Success && caps.formatCount > 0 &&
+            (caps.formats[0] == wgpu::TextureFormat::BGRA8Unorm || caps.formats[0] == wgpu::TextureFormat::RGBA8Unorm))
+            m_surfaceFormat = caps.formats[0];
+    }
+    GetLogger()->Info("WebGPU canvas format: %%", m_surfaceFormat == wgpu::TextureFormat::BGRA8Unorm ? "bgra8unorm" : "rgba8unorm");
     ConfigureSurface();
 
     m_textures.Init(m_device, m_queue);
@@ -513,7 +522,7 @@ void CWebGPUDevice::SetClearColor(const Color& color)
 void CWebGPUDevice::CopyFramebufferToTexture(Texture& texture, int xOffset, int yOffset, int x, int y, int width, int height)
 {
     const WebGPUTextureEntry* entry = m_textures.Find(texture.id);
-    if (entry == nullptr || entry->depth) return;
+    if (entry == nullptr || entry->depth || entry->format != m_surfaceFormat) return;
     m_passes.CopyColorToTexture(entry->texture, entry->height, xOffset, yOffset, x, y, width, height);
 }
 
