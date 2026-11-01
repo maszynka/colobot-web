@@ -1,3 +1,7 @@
 upstream/
 build*/
 .DS_Store
+dist/
+.cache/
+node_modules/
+!tools/build-data/
