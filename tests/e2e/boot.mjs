@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // E2E boot harness: serves dist/ on localhost, opens Chrome with WebGPU, captures console,
 // network and screenshots into tests/e2e/out/.
-// Usage: node tests/e2e/boot.mjs [--dist DIR] [--headed] [--wait SECONDS] [--click]
+// Usage: node tests/e2e/boot.mjs [--dist DIR] [--headed] [--wait SECONDS] [--click] [--query QS] [--steps 'x,y,ms;...']
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,7 +49,7 @@ page.on('requestfinished', async (r) => {
 page.on('response', (r) => { if (r.status() >= 400) log.push(`[${stamp()}] HTTP ${r.status()} ${r.url()}`); });
 page.on('requestfailed', (r) => net.push({ t: stamp(), url: r.url().replace(url, ''), failed: r.failure()?.errorText }));
 
-await page.goto(url);
+await page.goto(url + (opt('query', '') ? '?' + opt('query', '') : ''));
 const caps = await page.evaluate(async () => ({
   gpu: !!navigator.gpu, adapter: !!(navigator.gpu && await navigator.gpu.requestAdapter()),
   jspi: typeof WebAssembly.Suspending === 'function',
@@ -71,7 +71,15 @@ while (Date.now() < deadline) {
   if (st && st.frames > 60 && menu === null) { menu = Date.now() - t0; await snap('menu'); }
 }
 await snap('final');
-if (args.includes('--click')) { await page.mouse.move(858, 240); await page.waitForTimeout(300); await page.mouse.down(); await page.waitForTimeout(150); await page.mouse.up(); await page.waitForTimeout(500); if (args.includes('--enter')) { await page.keyboard.press('Enter'); } await page.waitForTimeout(2000); await snap('after-click'); }
+const click = async (x, y) => { await page.mouse.move(x, y); await page.waitForTimeout(200); await page.mouse.down(); await page.waitForTimeout(120); await page.mouse.up(); };
+if (args.includes('--click')) {
+  // CScreenWelcome (3 x 3 s, each swallows the first input) must be over: run with --wait >= 10.
+  // Click OK on the player-name dialog -> main menu.
+  await click(858, 240); await page.waitForTimeout(2500); await snap('main-menu');
+}
+for (const step of (opt('steps', '') || '').split(';').filter(Boolean)) {
+  const [x, y, w] = step.split(',').map(Number); await click(x, y); await page.waitForTimeout(w || 2000); await snap(`step-${x}-${y}`);
+}
 
 const fsCheck = await page.evaluate(() => {
   try { const M = window.Module; if (!M || !M.FS) return 'no FS export';

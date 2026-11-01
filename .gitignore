@@ -7,3 +7,4 @@ node_modules/
 !tools/build-data/
 .claude/
 .data-out/
+tests/e2e/out/
