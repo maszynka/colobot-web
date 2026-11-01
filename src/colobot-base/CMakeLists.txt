@@ -16,7 +16,6 @@ target_include_directories(Colobot-Base PUBLIC
 target_link_libraries(Colobot-Base PUBLIC
     CBot
     Colobot-Common
-    localename
     SDL2::Core
     SDL2::Image
     SDL2::TTF
@@ -29,6 +28,10 @@ target_link_libraries(Colobot-Base PUBLIC
     nlohmann_json::nlohmann_json
     Intl::Intl
 )
+
+if(NOT EMSCRIPTEN)
+    target_link_libraries(Colobot-Base PUBLIC localename)
+endif()
 
 # Optional libraries
 if(OPENAL_SOUND)
