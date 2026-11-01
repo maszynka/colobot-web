@@ -4,6 +4,7 @@
 // Usage: node tests/e2e/boot.mjs [--dist DIR] [--headed] [--wait SECONDS] [--click] [--query QS] [--steps 'x,y,ms;...']
 import http from 'node:http';
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
@@ -17,14 +18,37 @@ const OUT = path.join(root, 'tests/e2e/out');
 fs.mkdirSync(OUT, { recursive: true });
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm',
-  '.json': 'application/json', '.pak': 'application/octet-stream', '.css': 'text/css', '.png': 'image/png' };
+  '.json': 'application/json', '.pak': 'application/octet-stream', '.css': 'text/css', '.png': 'image/png', '.gz': 'application/octet-stream' };
+// Emulates Cloudflare edge compression: text/js/json/wasm are brotli-encoded (quality 5, cached)
+// when the client accepts br; .pak/.png/.ogg etc. go out as-is (CF does not compress them).
+// logs bytes actually sent (served[]) so byte counts are wire bytes, independent of Playwright events.
+const served = [];
+const brCache = new Map();
+let t0 = Date.now();
 const server = http.createServer((req, res) => {
   const p = path.join(DIST, decodeURIComponent(new URL(req.url, 'http://x').pathname));
-  const f = p.endsWith('/') ? path.join(p, 'index.html') : p;
+  let f = p.endsWith('/') ? path.join(p, 'index.html') : p;
   if (!f.startsWith(DIST) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { console.error('404', req.url); res.writeHead(404); res.end(); return; }
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream',
-    'Content-Length': fs.statSync(f).size, 'Cache-Control': 'no-store',
-    'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' });
+  const type = MIME[path.extname(f)] || 'application/octet-stream';
+  const hdr = { 'Content-Type': type, 'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes',
+    'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' };
+  const range = req.headers.range && /bytes=(\d+)-(\d+)/.exec(req.headers.range);
+  if (!range && !args.includes('--no-br') && /\bbr\b/.test(req.headers['accept-encoding'] || '') && /\.(html|js|mjs|json|wasm|css|txt)$/.test(f)) {
+    if (!brCache.has(f)) brCache.set(f, zlib.brotliCompressSync(fs.readFileSync(f), { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } }));
+    const body = brCache.get(f);
+    res.writeHead(200, { ...hdr, 'Content-Encoding': 'br', 'Content-Length': body.length });
+    served.push({ ms: Date.now() - t0, url: req.url, bytes: body.length, br: true });
+    res.end(body); return;
+  }
+  const size = fs.statSync(f).size;
+  if (range) {
+    const a = +range[1], b = Math.min(+range[2], size - 1);
+    res.writeHead(206, { ...hdr, 'Content-Range': `bytes ${a}-${b}/${size}`, 'Content-Length': b - a + 1 });
+    served.push({ ms: Date.now() - t0, url: req.url, bytes: b - a + 1 });
+    fs.createReadStream(f, { start: a, end: b }).pipe(res); return;
+  }
+  res.writeHead(200, { ...hdr, 'Content-Length': size });
+  served.push({ ms: Date.now() - t0, url: req.url, bytes: size });
   fs.createReadStream(f).pipe(res);
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -35,8 +59,15 @@ const browser = await chromium.launch({
   args: ['--enable-unsafe-webgpu', '--enable-features=WebAssemblyExperimentalJSPI', '--enable-experimental-webassembly-jspi'],
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+// --throttle MBPS: emulate a link (CDP), e.g. 50 -> 50 Mbit/s down, 20 ms RTT.
+if (opt('throttle', '')) {
+  const cdp = await page.context().newCDPSession(page);
+  const bps = +opt('throttle', '50') * 1e6 / 8;
+  await cdp.send('Network.enable');
+  await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 20, downloadThroughput: bps, uploadThroughput: bps / 5 });
+}
 const log = [];
-const t0 = Date.now();
+t0 = Date.now();
 const stamp = () => ((Date.now() - t0) / 1000).toFixed(2) + 's';
 page.on('console', (m) => log.push(`[${stamp()}] ${m.type()}: ${m.text()}`));
 page.on('pageerror', (e) => log.push(`[${stamp()}] PAGEERROR: ${e.stack || e}`));
@@ -44,10 +75,10 @@ const net = [];
 page.on('requestfinished', async (r) => {
   const resp = await r.response().catch(() => null);
   const len = resp ? +(await resp.headerValue('content-length').catch(() => 0)) || 0 : 0;
-  net.push({ t: stamp(), url: r.url().replace(url, ''), status: resp && resp.status(), bytes: len });
+  net.push({ ms: Date.now() - t0, t: stamp(), url: r.url().replace(url, ''), status: resp && resp.status(), bytes: len });
 });
 page.on('response', (r) => { if (r.status() >= 400) log.push(`[${stamp()}] HTTP ${r.status()} ${r.url()}`); });
-page.on('requestfailed', (r) => net.push({ t: stamp(), url: r.url().replace(url, ''), failed: r.failure()?.errorText }));
+page.on('requestfailed', (r) => net.push({ ms: Date.now() - t0, t: stamp(), url: r.url().replace(url, ''), failed: r.failure()?.errorText }));
 
 await page.goto(url + (opt('query', '') ? '?' + opt('query', '') : ''));
 const caps = await page.evaluate(async () => ({
@@ -58,10 +89,10 @@ log.push(`[caps] ${JSON.stringify(caps)}`);
 
 let shot = 0;
 const snap = async (name) => page.screenshot({ path: path.join(OUT, `${String(shot++).padStart(2, '0')}-${name}.png`) });
-let firstPaint = null, menu = null;
+let firstPaint = null, menu = null, mainMenu = null;
 const deadline = Date.now() + WAIT;
 while (Date.now() < deadline) {
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(100); // 100 ms resolution for firstPaint/menu timings
   const st = await page.evaluate(() => ({
     loading: getComputedStyle(document.getElementById('loading')).display,
     status: document.getElementById('status').textContent,
@@ -75,7 +106,7 @@ const click = async (x, y) => { await page.mouse.move(x, y); await page.waitForT
 if (args.includes('--click')) {
   // CScreenWelcome (3 x 3 s, each swallows the first input) must be over: run with --wait >= 10.
   // Click OK on the player-name dialog -> main menu.
-  await click(858, 240); await page.waitForTimeout(2500); await snap('main-menu');
+  await click(858, 240); await page.waitForTimeout(2500); await snap('main-menu'); mainMenu = Date.now() - t0;
 }
 for (const step of (opt('steps', '') || '').split(';').filter(Boolean)) {
   const [x, y, w] = step.split(',').map(Number); await click(x, y); await page.waitForTimeout(w || 2000); await snap(`step-${x}-${y}`);
@@ -90,11 +121,14 @@ const audio = await page.evaluate(() => {
   const c = window.Module && window.Module.AL && window.Module.AL.contexts;
   return c ? Object.values(c).map((x) => x && x.audioCtx && x.audioCtx.state).join(',') : 'no AL contexts';
 });
-const total = net.reduce((a, n) => a + (n.bytes > 0 ? n.bytes : 0), 0);
+const total = served.reduce((a, n) => a + n.bytes, 0);
 const frames = await page.evaluate(() => window.__colobotFrames || 0);
-const summary = { url, caps, frames, firstPaintMs: firstPaint, menuMs: menu, bytes: total, requests: net.length, fsCheck, audio };
+const longFrames = await page.evaluate(() => window.__colobotLongFrames || []); // [startMs, durationMs] > 50 ms
+const upTo = (ms) => ms === null ? null : served.filter((n) => n.ms <= ms).reduce((a, n) => a + n.bytes, 0);
+const summary = { url, caps, frames, firstPaintMs: firstPaint, menuMs: menu, mainMenuMs: mainMenu,
+  bytesAtFirstPaint: upTo(firstPaint), longFrames, bytesAtMainMenu: upTo(mainMenu), bytes: total, requests: net.length, fsCheck, audio };
 fs.writeFileSync(path.join(OUT, 'console.log'), log.join('\n') + '\n');
-fs.writeFileSync(path.join(OUT, 'network.json'), JSON.stringify(net, null, 1));
+fs.writeFileSync(path.join(OUT, 'network.json'), JSON.stringify({ served, events: net }, null, 1));
 fs.writeFileSync(path.join(OUT, 'summary.json'), JSON.stringify(summary, null, 1));
 console.log(JSON.stringify(summary, null, 1));
 await browser.close();
