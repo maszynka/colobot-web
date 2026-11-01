@@ -131,10 +131,17 @@ std::unique_ptr<CSDLMemoryWrapper> CResourceManager::GetSDLMemoryHandler(const s
     return std::make_unique<CSDLMemoryWrapper>(filename);
 }
 
+#ifdef __EMSCRIPTEN__
+std::unique_ptr<CVorbisWavReader> CResourceManager::GetSNDFileHandler(const std::filesystem::path& filename)
+{
+    return std::make_unique<CVorbisWavReader>(filename);
+}
+#else
 std::unique_ptr<CSNDFileWrapper> CResourceManager::GetSNDFileHandler(const std::filesystem::path& filename)
 {
     return std::make_unique<CSNDFileWrapper>(filename);
 }
+#endif
 
 
 bool CResourceManager::Exists(const std::filesystem::path& filename)

@@ -33,11 +33,11 @@ target_include_directories(web_OpenAL_OpenAL INTERFACE "${EMSCRIPTEN_SYSROOT}/in
 colobot_web_iface(Intl::Intl)
 target_include_directories(web_Intl_Intl INTERFACE "${COLOBOT_WEB_ROOT}/third_party/stubs/include")
 
-# libsndfile: TEMPORARY stub so the link succeeds. TODO(WP2): replace with stb_vorbis/WAV reader.
+# libsndfile: not used on web (stb_vorbis + vorbis_wav_reader, see cmake/web_sound.cmake).
+# Empty interface target only so the shared target_link_libraries(SndFile::sndfile) resolves.
 if(NOT TARGET SndFile::sndfile)
-    add_library(sndfile_stub STATIC "${COLOBOT_WEB_ROOT}/third_party/stubs/src/sndfile_stub.c")
-    target_include_directories(sndfile_stub PUBLIC "${COLOBOT_WEB_ROOT}/third_party/stubs/include")
-    add_library(SndFile::sndfile ALIAS sndfile_stub)
+    add_library(web_sndfile_empty INTERFACE)
+    add_library(SndFile::sndfile ALIAS web_sndfile_empty)
 endif()
 
 # glm: vendored headers (1.0.1)

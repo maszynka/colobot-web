@@ -19,6 +19,8 @@
 
 #pragma once
 
+#ifndef __EMSCRIPTEN__ // web build uses vorbis_wav_reader
+
 #include <filesystem>
 #include <string>
 
@@ -51,3 +53,5 @@ private:
     std::string m_last_error = {};
     SF_VIRTUAL_IO m_snd_callbacks = {};
 };
+
+#endif // __EMSCRIPTEN__
