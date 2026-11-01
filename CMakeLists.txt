@@ -41,7 +41,7 @@ if(EMSCRIPTEN)
         --use-port=sdl2_ttf
         --use-port=zlib
         --use-port=libpng
-        # TODO(WP4): --use-port=emdawnwebgpu (never with -sUSE_WEBGPU=1)
+        --use-port=emdawnwebgpu # WP4; never combine with -sUSE_WEBGPU=1
     )
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         list(APPEND COLOBOT_WEB_COMMON_FLAGS -O1 -g)

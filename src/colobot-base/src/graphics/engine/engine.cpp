@@ -563,7 +563,12 @@ void CEngine::WriteScreenShot(const std::filesystem::path& fileName)
 
     data->fileName = fileName;
 
+#ifdef __EMSCRIPTEN__
+    // No pthreads in the web build: std::thread would throw. Write inline (colobot-web WP4).
+    WriteScreenShotThread(std::move(data));
+#else
     std::thread{&CEngine::WriteScreenShotThread, std::move(data)}.detach();
+#endif
 }
 
 void CEngine::WriteScreenShotThread(std::unique_ptr<WriteScreenShotData> data)
