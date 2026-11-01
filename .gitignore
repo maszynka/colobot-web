@@ -5,3 +5,4 @@ dist/
 .cache/
 node_modules/
 !tools/build-data/
+.claude/
