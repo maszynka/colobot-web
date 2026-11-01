@@ -14,7 +14,7 @@ add_compile_options(
     -pedantic-errors
     -Wmissing-prototypes
     -Wno-error=deprecated-declarations      # updated version of physfs is not available on some platforms so we keep using deprecated functions, see #958
-    -pthread
+    $<$<NOT:$<BOOL:${EMSCRIPTEN}>>:-pthread>  # colobot-web: no pthreads in the wasm build
 )
 
 add_definitions(-DHAVE_DEMANGLE)

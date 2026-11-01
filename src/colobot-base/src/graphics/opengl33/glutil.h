@@ -22,6 +22,8 @@
 // config.h must be included first
 #include "common/config.h"
 
+#include "graphics/core/device_factory.h"
+
 #include <GL/glew.h>
 #include <glm/glm.hpp>
 

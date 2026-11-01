@@ -149,46 +149,52 @@ include("${colobot_SOURCE_DIR}/cmake/colobot-lint.cmake")
 # Searching for packages
 ##
 
-find_package(OpenGL 1.4 REQUIRED)
-find_package(SDL2 REQUIRED)
-find_package(SDL2_image REQUIRED)
-find_package(SDL2_ttf REQUIRED)
-find_package(PNG 1.2 REQUIRED)
-find_package(Gettext REQUIRED)
-find_package(Intl REQUIRED)
-find_package(PhysFS REQUIRED)
-find_package(glm CONFIG REQUIRED)
+if(EMSCRIPTEN)
+    # colobot-web: dependencies come from Emscripten ports / vendored third_party
+    # (see cmake/ColobotWebDeps.cmake at the repository root).
+    include(ColobotWebDeps)
+else()
+    find_package(OpenGL 1.4 REQUIRED)
+    find_package(SDL2 REQUIRED)
+    find_package(SDL2_image REQUIRED)
+    find_package(SDL2_ttf REQUIRED)
+    find_package(PNG 1.2 REQUIRED)
+    find_package(Gettext REQUIRED)
+    find_package(Intl REQUIRED)
+    find_package(PhysFS REQUIRED)
+    find_package(glm CONFIG REQUIRED)
 
-# Add target alias glm::glm for older versions of the library
-if(NOT TARGET glm::glm)
-    add_library(glm::glm ALIAS glm)
-endif()
-
-find_package(nlohmann_json 3.10 QUIET)
-
-if(NOT nlohmann_json_FOUND)
-    message(STATUS "Using nlohmann_json git submodule")
-    set(JSON_BuildTests OFF CACHE INTERNAL "")
-    add_subdirectory(lib/json)
-endif()
-
-set(GLEW_USE_STATIC_LIBS ${GLEW_STATIC})
-find_package(GLEW REQUIRED)
-
-if (OPENAL_SOUND)
-    find_package(OpenAL REQUIRED)
-
-    if (NOT TARGET OpenAL::OpenAL)
-        add_library(OpenAL::OpenAL UNKNOWN IMPORTED)
-
-        set_target_properties(OpenAL::OpenAL PROPERTIES
-            IMPORTED_LOCATION "${OPENAL_LIBRARY}")
-        set_target_properties(OpenAL::OpenAL PROPERTIES
-            INTERFACE_INCLUDE_DIRECTORIES "${OPENAL_INCLUDE_DIR}")
+    # Add target alias glm::glm for older versions of the library
+    if(NOT TARGET glm::glm)
+        add_library(glm::glm ALIAS glm)
     endif()
-endif()
 
-find_package(SndFile REQUIRED)
+    find_package(nlohmann_json 3.10 QUIET)
+
+    if(NOT nlohmann_json_FOUND AND NOT TARGET nlohmann_json::nlohmann_json)
+        message(STATUS "Using nlohmann_json git submodule")
+        set(JSON_BuildTests OFF CACHE INTERNAL "")
+        add_subdirectory(lib/json)
+    endif()
+
+    set(GLEW_USE_STATIC_LIBS ${GLEW_STATIC})
+    find_package(GLEW REQUIRED)
+
+    if (OPENAL_SOUND)
+        find_package(OpenAL REQUIRED)
+
+        if (NOT TARGET OpenAL::OpenAL)
+            add_library(OpenAL::OpenAL UNKNOWN IMPORTED)
+
+            set_target_properties(OpenAL::OpenAL PROPERTIES
+                IMPORTED_LOCATION "${OPENAL_LIBRARY}")
+            set_target_properties(OpenAL::OpenAL PROPERTIES
+                INTERFACE_INCLUDE_DIRECTORIES "${OPENAL_INCLUDE_DIR}")
+        endif()
+    endif()
+
+    find_package(SndFile REQUIRED)
+endif()
 
 if(NOT ASSERTS)
     add_definitions(-DNDEBUG)
@@ -267,7 +273,9 @@ add_subdirectory(colobot-base)
 # Add Colobot executable
 add_subdirectory(colobot-app)
 
-add_subdirectory(po)
+if(NOT EMSCRIPTEN)
+    add_subdirectory(po)
+endif()
 
 if(TOOLS)
     add_subdirectory(tools)

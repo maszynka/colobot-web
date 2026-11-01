@@ -1,0 +1,11 @@
+# Platform analysis (sonnet)
+- Layout: colobot-app, colobot-base/src, colobot-common, CBot. Submodules data, lib/json, lib/googletest empty (use upstream/colobot-data; fetch nlohmann json).
+- CMake C++20; cmake/systems/{Linux,Darwin,Windows,Other}.cmake -> Emscripten should use Other (system_other.cpp). Options: OPENAL_SOUND=ON CBOT_STATIC=ON DESKTOP/TESTS/TOOLS=OFF PORTABLE(_SAVES)=ON.
+- Deps: SDL2/SDL2_image/SDL2_ttf/libpng/zlib/ogg/vorbis = emscripten ports; OpenAL built-in (-lopenal, WebAudio); libsndfile no port -> replace sndfile_wrapper + sound/oalsound/buffer.cpp loader with stb_vorbis + wav parser; PhysFS cross-compile (plain C); glm/json header-only; GLEW drop; gettext stub; no boost; find_package(OpenGL) override.
+- Main loop: CApplication::Run app.cpp:1041 blocking while(true), SDL_Delay, SDL_WaitEvent when inactive, goto end. Refactor to Frame() + emscripten_set_main_loop_arg (rAF). JSPI preferred over ASYNCIFY for blocking loaders.
+- Threads: CWorkerThread (sound only, alsound.cpp CacheMusic/PlayMusic), app.cpp:1535 StartLoadingMusic detached thread, engine.cpp:566 screenshot thread, event queue mutex. Run inline/deferred; avoid pthreads.
+- FS: CResourceManager PhysFS (resourcemanager.cpp), CPathManager pathman.cpp, system.cpp GetSaveDir. Data via MEMFS/WASMFS fetch backend or packs + PHYSFS_mountMemory; saves -> IDBFS + syncfs (config colobot.ini too).
+- Blocking loads: CRobotMain::CreateScene robotmain.cpp:2771 (models/textures/terrain/CBot), CacheAll sounds sound.cpp:45 at startup.
+- CBot: pure portable C++, stack state machine, static link.
+- Only GL3.3 backend; WebGL2 would need ES shaders etc (we go WebGPU instead).
+- Audio: AudioContext resume on first gesture. No asm; minimal ifdefs; getopt args -> URL query.

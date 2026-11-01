@@ -38,7 +38,7 @@
 
 #include "graphics/core/device.h"
 #include "graphics/engine/engine.h"
-#include "graphics/opengl33/glutil.h"
+#include "graphics/core/device_factory.h"
 
 #include "level/robotmain.h"
 
