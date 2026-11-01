@@ -19,6 +19,9 @@
 
 #include "level/robotmain.h"
 
+#ifdef __EMSCRIPTEN__
+#include "common/resources/web_archiver.h"
+#endif
 #include "CBot/CBot.h"
 
 #include "app/app.h"
@@ -4668,6 +4671,9 @@ bool CRobotMain::IOWriteScene(const std::filesystem::path& filename,
 
         m_app->ResetTimeAfterLoading();
     }
+#ifdef __EMSCRIPTEN__
+    web_save_sync();
+#endif
     return true;
 }
 
