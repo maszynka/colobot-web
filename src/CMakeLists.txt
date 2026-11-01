@@ -210,7 +210,9 @@ endif()
 ##
 # Localename
 ##
-add_subdirectory(lib/localename)
+if(NOT EMSCRIPTEN) # web: locale comes from navigator.language (CSystemUtilsEmscripten::GetBrowserLanguage)
+    add_subdirectory(lib/localename)
+endif()
 
 
 ##

@@ -29,7 +29,7 @@ colobot_web_iface(OpenAL::OpenAL)
 target_link_options(web_OpenAL_OpenAL INTERFACE -lopenal)
 target_include_directories(web_OpenAL_OpenAL INTERFACE "${EMSCRIPTEN_SYSROOT}/include/AL")
 
-# gettext: identity stub (English only). Owner WP1; i18n in WP13.
+# gettext + gnulib localename: header-only stubs (English only; real i18n in WP13).
 colobot_web_iface(Intl::Intl)
 target_include_directories(web_Intl_Intl INTERFACE "${COLOBOT_WEB_ROOT}/third_party/stubs/include")
 

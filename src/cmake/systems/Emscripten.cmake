@@ -12,13 +12,12 @@ set(PLATFORM_INSTALL_DATA_DIR "data")
 set(PLATFORM_INSTALL_I18N_DIR "lang")
 set(PLATFORM_INSTALL_DOC_DIR "doc")
 
-# TODO(WP1): replace system_other with system_emscripten.cpp (IDBFS save dir, performance.now clock).
 set(PLATFORM_SYSTEM_SOURCES
     system/system.cpp
     system/system.h
 
-    system/system_other.cpp
-    system/system_other.h
+    system/system_emscripten.cpp
+    system/system_emscripten.h
 
     CACHE INTERNAL "System sources"
 )

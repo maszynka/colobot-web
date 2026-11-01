@@ -43,13 +43,37 @@ target_sources(Colobot-Base PRIVATE
     resources/sdl_file_wrapper.h
     resources/sdl_memory_wrapper.cpp
     resources/sdl_memory_wrapper.h
-    resources/sndfile_wrapper.cpp
-    resources/sndfile_wrapper.h
-
     thread/worker_thread.h
 
     ${PLATFORM_SYSTEM_SOURCES}
 )
+
+# --- Web-only source hooks (owned by WP1; other packages just add the files) ---
+# WP2 (sound): resources/vorbis_wav_reader.{h,cpp}. Once present it replaces sndfile_wrapper.
+# WP11 (lazy FS): resources/web_archiver.{h,c}.
+set(WEB_SOUND_SOURCES "")
+set(WEB_FS_SOURCES "")
+if(EMSCRIPTEN)
+    foreach(f resources/vorbis_wav_reader.cpp resources/vorbis_wav_reader.h)
+        if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/${f}")
+            list(APPEND WEB_SOUND_SOURCES ${f})
+        endif()
+    endforeach()
+    foreach(f resources/web_archiver.c resources/web_archiver.h)
+        if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/${f}")
+            list(APPEND WEB_FS_SOURCES ${f})
+        endif()
+    endforeach()
+    target_sources(Colobot-Base PRIVATE ${WEB_SOUND_SOURCES} ${WEB_FS_SOURCES})
+endif()
+
+# libsndfile wrapper: native always; on web only until WP2's reader exists
+if(NOT EMSCRIPTEN OR NOT WEB_SOUND_SOURCES)
+    target_sources(Colobot-Base PRIVATE
+        resources/sndfile_wrapper.cpp
+        resources/sndfile_wrapper.h
+    )
+endif()
 
 # Configure files
 macro(SetFlag var name)
