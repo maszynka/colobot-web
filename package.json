@@ -1,0 +1,8 @@
+{
+  "name": "colobot-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build-data": "node tools/build-data/build.mjs"
+  }
+}
