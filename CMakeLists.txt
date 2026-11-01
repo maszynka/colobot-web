@@ -31,7 +31,11 @@ if(NOT nlohmann_json_FOUND AND NOT TARGET nlohmann_json::nlohmann_json)
 endif()
 
 if(EMSCRIPTEN)
-    option(COLOBOT_WEB_LTO "Use -flto (slow link)" OFF) # TODO(WP13): turn ON for release builds
+    option(COLOBOT_WEB_LTO "Use -flto (slow link)" OFF)
+    # -Oz: 3.68 MB wasm (1.25 MB br) vs 4.60 MB (1.43 MB br) at -O3, same 60 fps in mission 1 (WP13).
+    # -flto measured larger/no gain (LTO -O3 5.3 MB, LTO -Oz 3.8 MB), so it stays off.
+    set(COLOBOT_WEB_OPT "-Oz" CACHE STRING "Release optimization flag (-O3, -O2, -Os, -Oz)")
+    option(COLOBOT_WEB_CLOSURE "Minify the JS glue with --closure 1" OFF)
 
     # Flags that must be identical at compile AND link (PLAN-REVIEW §2 item 1)
     set(COLOBOT_WEB_COMMON_FLAGS
@@ -46,7 +50,7 @@ if(EMSCRIPTEN)
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         list(APPEND COLOBOT_WEB_COMMON_FLAGS -O1 -g)
     else()
-        list(APPEND COLOBOT_WEB_COMMON_FLAGS -O3)
+        list(APPEND COLOBOT_WEB_COMMON_FLAGS ${COLOBOT_WEB_OPT})
     endif()
     if(COLOBOT_WEB_LTO)
         list(APPEND COLOBOT_WEB_COMMON_FLAGS -flto)
@@ -78,8 +82,10 @@ if(EMSCRIPTEN)
         -sEXPORT_NAME=createColobot
         -sEXIT_RUNTIME=0
         -lidbfs.js
-        # TODO(WP6/WP13): --closure 1 once the JS shell is settled
     )
+    if(COLOBOT_WEB_CLOSURE)
+        target_link_options(colobot PRIVATE --closure 1)
+    endif()
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         target_link_options(colobot PRIVATE -sASSERTIONS=2 -sSAFE_HEAP=1)
     endif()
