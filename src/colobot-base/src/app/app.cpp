@@ -19,6 +19,10 @@
 
 #include "app/app.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/html5.h>
+#endif
+
 #include "app/controller.h"
 #include "app/input.h"
 #include "app/modman.h"
@@ -724,9 +728,17 @@ bool CApplication::CreateVideoSurface()
     // Web: plain SDL window bound to the canvas, no GL context; the WebGPU
     // device (created via device_factory) owns the surface. Fullscreen can
     // only be entered from a user gesture, so it is left to the JS shell.
+    // The JS shell (web/loader.js) is the single owner of the canvas size:
+    // CSS 100vw/100vh, backing store = CSS size * devicePixelRatio. The SDL
+    // window is NOT resizable, so SDL's own window-resize handler never
+    // rewrites the canvas (that fought loader.js and made the resolution jump).
+    // The app only reads the size (see SyncCanvasSize()).
     Uint32 videoFlags = 0;
-    if (m_deviceConfig->resizeable)
-        videoFlags |= SDL_WINDOW_RESIZABLE;
+    {
+        int cw = 0, ch = 0;
+        if (emscripten_get_canvas_element_size("#canvas", &cw, &ch) == EMSCRIPTEN_RESULT_SUCCESS && cw > 0 && ch > 0)
+            m_deviceConfig->size = { cw, ch };
+    }
 
     m_private->window = SDL_CreateWindow(m_windowTitle.c_str(),
                                          SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
@@ -892,10 +904,37 @@ void CApplication::TryToSetVSync()
 #endif
 }
 
+#ifdef __EMSCRIPTEN__
+void CApplication::SyncCanvasSize()
+{
+    int cw = 0, ch = 0;
+    if (emscripten_get_canvas_element_size("#canvas", &cw, &ch) != EMSCRIPTEN_RESULT_SUCCESS || cw <= 0 || ch <= 0)
+        return;
+    if (cw == m_deviceConfig->size.x && ch == m_deviceConfig->size.y)
+        return;
+    // Keep SDL's window size equal to the backing store so its mouse
+    // coordinate scaling (window->w / CSS width) stays correct. With
+    // pixel_ratio 1 this only re-sets canvas.width/height to the same values.
+    SDL_SetWindowSize(m_private->window, cw, ch);
+    Gfx::DeviceConfig newConfig = *m_deviceConfig;
+    newConfig.size = { cw, ch };
+    ChangeVideoConfig(newConfig, /* isSetSize */ false);
+}
+#endif
+
 bool CApplication::ChangeVideoConfig(const Gfx::DeviceConfig &newConfig, bool isSetSize)
 {
     *m_deviceConfig = newConfig;
 
+#ifdef __EMSCRIPTEN__
+    // Web: the canvas size belongs to the JS shell; ignore requested sizes.
+    {
+        int cw = 0, ch = 0;
+        if (emscripten_get_canvas_element_size("#canvas", &cw, &ch) == EMSCRIPTEN_RESULT_SUCCESS && cw > 0 && ch > 0)
+            m_deviceConfig->size = { cw, ch };
+        isSetSize = false;
+    }
+#endif
     if ( isSetSize ) {
         // TODO: Somehow this doesn't work for maximized windows (at least on Ubuntu)
         // It appears that "doesn't work" means "is a no-op"
@@ -1115,6 +1154,7 @@ bool CApplication::Frame()
     // (SDL_PeepEvents() doesn't call it)
 #ifdef __EMSCRIPTEN__
     SDL_PumpEvents();
+    SyncCanvasSize();
 #else
     if (m_active)
         SDL_PumpEvents();

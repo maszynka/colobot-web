@@ -193,6 +193,10 @@ public:
     const Gfx::DeviceConfig& GetVideoConfig() const;
 
     //! Change the video mode to given mode
+#ifdef __EMSCRIPTEN__
+    //! Web: adopt the canvas backing-store size set by the JS shell
+    void        SyncCanvasSize();
+#endif
     bool        ChangeVideoConfig(const Gfx::DeviceConfig &newConfig, bool isSetSize);
 
     //! Suspends animation (time will not be updated)

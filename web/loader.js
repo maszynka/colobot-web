@@ -71,7 +71,10 @@ async function main() {
     canvas.height = Math.max(1, Math.floor(canvas.clientHeight * dpr));
   };
   sizeCanvas();
+  // loader.js is the single owner of the canvas size (CSS 100vw/100vh, backing = CSS * dpr);
+  // the wasm side only reads canvas.width/height each frame (CApplication::SyncCanvasSize).
   window.addEventListener('resize', sizeCanvas);
+  if (window.ResizeObserver) new ResizeObserver(sizeCanvas).observe(canvas);
 
   const mod = {
     canvas,
@@ -122,6 +125,7 @@ async function main() {
       busy = true;
       try {
         const r = await Module._colobot_frame();
+        window.__colobotFrames = (window.__colobotFrames || 0) + 1;
         if (r === 0) { stopped = true; return; }
       } catch (e) { stopped = true; fail(e); return; }
       finally { busy = false; }
