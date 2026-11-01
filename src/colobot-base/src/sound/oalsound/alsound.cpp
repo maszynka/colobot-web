@@ -21,6 +21,11 @@
 #include "sound/oalsound/alsound.h"
 #include "common/stringutils.h"
 
+#ifdef __EMSCRIPTEN__
+#include "common/resources/resourcemanager.h"
+#include "common/resources/web_archiver.h"
+#endif
+
 #include <algorithm>
 #include <iomanip>
 
@@ -155,8 +160,26 @@ bool CALSound::Cache(SoundType sound, const std::filesystem::path &filename)
     return false;
 }
 
+#ifdef __EMSCRIPTEN__
+// WP13: music is loose data fetched over HTTP. Never block a frame on it: if the bytes are not
+// resident yet, start a background fetch and finish the request in FrameMove(). Files missing
+// from the manifest (data built without --music) are skipped silently instead of retried.
+static int WebMusicReady(const std::filesystem::path& filename)
+{
+    return web_fs_ready(filename.generic_string().c_str());
+}
+#endif
+
 void CALSound::CacheMusic(const std::filesystem::path &filename)
 {
+#ifdef __EMSCRIPTEN__
+    if (m_music.find(filename) == m_music.end())
+    {
+        if (!CResourceManager::Exists(filename)) return;
+        // Fetched later in FrameMove, after any pending PlayMusic (Intro2 must not delay Intro1).
+        if (m_pendingMusic.active || WebMusicReady(filename) == 0) { m_pendingCache.insert(filename); return; }
+    }
+#endif
     m_thread.Start([this, filename]()
     {
         if (m_music.find(filename) == m_music.end())
@@ -510,6 +533,19 @@ void CALSound::FrameMove(float rTime)
     {
         return;
     }
+#ifdef __EMSCRIPTEN__
+    for (auto it = m_pendingCache.begin(); !m_pendingMusic.active && it != m_pendingCache.end();)
+    {
+        if (WebMusicReady(*it) != 0) { auto f = *it; it = m_pendingCache.erase(it); CacheMusic(f); }
+        else ++it;
+    }
+    if (m_pendingMusic.active && WebMusicReady(m_pendingMusic.filename) != 0)
+    {
+        auto p = m_pendingMusic;
+        m_pendingMusic.active = false;
+        PlayMusic(p.filename, p.repeat, p.fadeTime);
+    }
+#endif
 
     float progress;
     float volume, frequency;
@@ -613,6 +649,19 @@ void CALSound::PlayMusic(const std::filesystem::path& filename, bool repeat, flo
     {
         return;
     }
+#ifdef __EMSCRIPTEN__
+    m_pendingMusic.active = false;
+    if (m_music.find(filename) == m_music.end())
+    {
+        int ready = WebMusicReady(filename);
+        if (ready < 0) return;
+        if (ready == 0)
+        {
+            m_pendingMusic = { true, filename, repeat, fadeTime };
+            return;
+        }
+    }
+#endif
 
     m_thread.Start([this, filename, repeat, fadeTime]()
     {
@@ -700,6 +749,9 @@ void CALSound::StopPauseMusic()
 
 void CALSound::StopMusic(float fadeTime)
 {
+#ifdef __EMSCRIPTEN__
+    m_pendingMusic.active = false;
+#endif
     if (!m_enabled || m_currentMusic == nullptr)
     {
         return;
@@ -714,6 +766,9 @@ void CALSound::StopMusic(float fadeTime)
 
 bool CALSound::IsPlayingMusic()
 {
+#ifdef __EMSCRIPTEN__
+    if (m_enabled && m_pendingMusic.active) return true; // about to play once fetched
+#endif
     if (!m_enabled || m_currentMusic == nullptr)
     {
         return false;

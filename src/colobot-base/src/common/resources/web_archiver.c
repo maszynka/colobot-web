@@ -46,7 +46,47 @@ EM_JS(int, wfs_js_init, (void), {
         }
         return val;
     };
+    /* WP13: one in-flight fetch per key; get(key) resolves the bytes of 'pack:<name>' or
+     * 'file:<path>' (loose). prefetch() warms the cache without blocking the frame loop. */
+    c.inflight = new Map();
+    c.get = function(key) {
+        var hit = c.cache.get(key);
+        if (hit) return Promise.resolve(c.touch(key, hit));
+        if (c.inflight.has(key)) return c.inflight.get(key);
+        var base = c.baseUrl || "";
+        var isPack = key.lastIndexOf('pack:', 0) === 0;
+        var name = key.slice(5);
+        var url = isPack ? c.manifest.packs[name].url : c.manifest.files[name].url;
+        var pr = fetch(base + url, c.lowPriority && c.lowPriority.has(key) ? { priority: 'low' } : undefined)
+            .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + url); return r.arrayBuffer(); })
+            .then(function(b) { c.inflight.delete(key); return c.touch(key, new Uint8Array(b)); },
+                  function(e) { c.inflight.delete(key); throw e; });
+        c.inflight.set(key, pr);
+        return pr;
+    };
+    c.keyOf = function(p) {
+        var f = c.manifest.files[p];
+        if (!f) return null;
+        if (f.pack) return c.packs[f.pack] ? null : 'pack:' + f.pack;
+        return 'file:' + p;
+    };
+    c.prefetch = function(key, low) {
+        if (!key || c.cache.has(key)) return;
+        if (low) { c.lowPriority = c.lowPriority || new Set(); c.lowPriority.add(key); }
+        c.get(key).catch(function(e) { err('web_archiver: prefetch ' + key + ': ' + e); });
+    };
     return 1;
+})
+
+/* WP13: 1 if path's bytes are resident (no fetch needed), else starts a background fetch and
+ * returns 0. -1 if the path is not in the manifest. Never suspends. */
+EM_JS(int, wfs_js_ready, (const char* path), {
+    var c = Module.colobotFS; var p = UTF8ToString(path);
+    if (!c || !c.manifest || !c.manifest.files[p]) return -1;
+    var key = c.keyOf(p);
+    if (!key || c.cache.has(key)) return 1;
+    c.prefetch(key, false);
+    return 0;
 })
 
 /* 0 = missing, 1 = file, 2 = dir; *size set for files */
@@ -77,30 +117,15 @@ EM_ASYNC_JS(int, wfs_js_fetch, (const char* path, void** out), {
     var c = Module.colobotFS; var p = UTF8ToString(path);
     var f = c.manifest.files[p];
     if (!f) return -1;
-    var base = c.baseUrl || "";
     try {
         var bytes;
-        if (f.pack) {
-            var pk = c.packs[f.pack];
-            if (!pk) {
-                pk = c.cache.get('pack:' + f.pack);
-                if (!pk) {
-                    var info = c.manifest.packs[f.pack];
-                    var r = await fetch(base + info.url);
-                    if (!r.ok) throw new Error('HTTP ' + r.status);
-                    pk = new Uint8Array(await r.arrayBuffer());
-                }
-                c.touch('pack:' + f.pack, pk);
-            }
+        if (f.pack && c.packs[f.pack]) {
+            bytes = c.packs[f.pack].subarray(f.offset, f.offset + f.size);
+        } else if (f.pack) {
+            var pk = await c.get('pack:' + f.pack);
             bytes = pk.subarray(f.offset, f.offset + f.size);
         } else {
-            bytes = c.cache.get('file:' + p);
-            if (!bytes) {
-                var r2 = await fetch(base + f.url);
-                if (!r2.ok) throw new Error('HTTP ' + r2.status);
-                bytes = new Uint8Array(await r2.arrayBuffer());
-            }
-            c.touch('file:' + p, bytes);
+            bytes = await c.get('file:' + p);
         }
         var ptr = _malloc(Math.max(bytes.byteLength, 1)); HEAPU8.set(bytes, ptr);
         HEAPU32[out >> 2] = ptr;
@@ -294,4 +319,9 @@ int web_fs_mount_data(void)
     FILE* f = fopen("/manifest.json", "a");
     if (f) fclose(f);
     return PHYSFS_mount("/manifest.json", NULL, 1) != 0;
+}
+
+int web_fs_ready(const char* path)
+{
+    return wfs_js_ready(path);
 }

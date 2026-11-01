@@ -35,6 +35,7 @@
 #include "sound/oalsound/check.h"
 
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <list>
@@ -148,6 +149,10 @@ private:
     CInlineExecutor m_thread;
     //! Sounds registered by Cache() but decoded on first Play()
     std::map<SoundType, std::filesystem::path> m_lazySounds;
+    //! Music requested before its bytes arrived (see WebMusicReady in alsound.cpp)
+    struct PendingMusic { bool active = false; std::filesystem::path filename; bool repeat = false; float fadeTime = 0.0f; };
+    PendingMusic m_pendingMusic;
+    std::set<std::filesystem::path> m_pendingCache;
 #else
     CWorkerThread m_thread;
 #endif
