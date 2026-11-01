@@ -41,6 +41,83 @@
 #include <memory>
 #include <vector>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#include <cstdlib>
+#include <sstream>
+
+// Returns location.search (e.g. "?runscene=train101&loglevel=debug") as a malloc'd string.
+EM_JS(char*, colobot_web_query_string, (), {
+    var q = (typeof location !== 'undefined' && location.search) ? location.search : "";
+    return stringToNewUTF8(q);
+});
+
+namespace
+{
+int DecodeHexDigit(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+std::string UrlDecode(const std::string& in)
+{
+    std::string out;
+    for (size_t i = 0; i < in.size(); ++i)
+    {
+        if (in[i] == '+')
+            out += ' ';
+        else if (in[i] == '%' && i + 2 < in.size()
+                 && DecodeHexDigit(in[i+1]) >= 0 && DecodeHexDigit(in[i+2]) >= 0)
+        {
+            out += static_cast<char>(DecodeHexDigit(in[i+1]) * 16 + DecodeHexDigit(in[i+2]));
+            i += 2;
+        }
+        else
+            out += in[i];
+    }
+    return out;
+}
+
+//! Converts "?a=b&c" into {"-a", "b", "-c"}
+std::vector<std::string> ArgsFromUrlQuery()
+{
+    std::vector<std::string> result;
+    char* raw = colobot_web_query_string();
+    std::string query = raw ? raw : "";
+    free(raw);
+    if (!query.empty() && query[0] == '?')
+        query.erase(0, 1);
+
+    std::stringstream ss(query);
+    std::string item;
+    while (std::getline(ss, item, '&'))
+    {
+        if (item.empty()) continue;
+        size_t eq = item.find('=');
+        std::string key = UrlDecode(item.substr(0, eq));
+        if (key.empty()) continue;
+        result.push_back("-" + key);
+        if (eq != std::string::npos)
+        {
+            std::string value = UrlDecode(item.substr(eq + 1));
+            if (!value.empty())
+                result.push_back(value);
+        }
+    }
+    return result;
+}
+} // namespace
+
+// Objects that must outlive main() on the web (EXIT_RUNTIME=0; the loop is JS-driven
+// via colobot_frame() in web/src/web_frame.cpp).
+#define COLOBOT_PERSIST static
+#else
+#define COLOBOT_PERSIST
+#endif
+
 /**
 \mainpage
 
@@ -104,13 +181,18 @@ extern "C"
 //! Entry point to the program
 int main(int argc, char *argv[])
 {
-    CLogger logger; // single instance of logger
+    COLOBOT_PERSIST CLogger logger; // single instance of logger
     logger.AddOutput(std::cerr);
 
     std::vector<std::string> args;
 
     for (int i = 0; i < argc; i++)
         args.push_back(argv[i]);
+
+#ifdef __EMSCRIPTEN__
+    for (const auto& arg : ArgsFromUrlQuery())
+        args.push_back(arg);
+#endif
 
     auto& systemUtils = CSystemUtils::GetInstance(); // platform-specific utils
     systemUtils.Init(args);
@@ -130,7 +212,7 @@ int main(int argc, char *argv[])
         logFileName = systemUtils.GetSaveDir() / "log.txt";
     }
 
-    std::ofstream logFile(logFileName);
+    COLOBOT_PERSIST std::ofstream logFile(logFileName);
     if (logFile)
         logger.AddOutput(logFile);
     else
@@ -140,14 +222,14 @@ int main(int argc, char *argv[])
 
     systemUtils.InitErrorHandling();
 
-    CResourceManager manager(argv[0]);
+    COLOBOT_PERSIST CResourceManager manager(argv[0]);
 
     // Initialize static string arrays
     InitializeRestext();
     InitializeEventTypeTexts();
 
     int code = 0;
-    CApplication app(&systemUtils); // single instance of the application
+    COLOBOT_PERSIST CApplication app(&systemUtils); // single instance of the application
 
     app.LoadEnvironmentVariables();
 
@@ -173,7 +255,15 @@ int main(int argc, char *argv[])
         return code;
     }
 
+#ifdef __EMSCRIPTEN__
+    // Do not run the loop here: JS awaits Module._colobot_frame() once per
+    // requestAnimationFrame. All state above is static and survives main().
+    app.BeginRun();
+    logger.Info("Main loop handed over to the browser");
+    return 0;
+#else
     code = app.Run();
+#endif
 
     logger.Info("Exiting with code %%", code);
 

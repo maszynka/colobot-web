@@ -55,7 +55,9 @@
 #include <stdlib.h>
 #include <getopt.h>
 #include <localename.h>
+#ifndef __EMSCRIPTEN__
 #include <thread>
+#endif
 
 #include <libintl.h>
 
@@ -144,11 +146,13 @@ CApplication::~CApplication()
         m_private->joystick = nullptr;
     }
 
+#ifndef __EMSCRIPTEN__
     if (m_private->glcontext != nullptr)
     {
         SDL_GL_DeleteContext(m_private->glcontext);
         m_private->glcontext = nullptr;
     }
+#endif
 
     if (m_private->window != nullptr)
     {
@@ -716,6 +720,20 @@ void CApplication::ReloadResources()
 
 bool CApplication::CreateVideoSurface()
 {
+#ifdef __EMSCRIPTEN__
+    // Web: plain SDL window bound to the canvas, no GL context; the WebGPU
+    // device (created via device_factory) owns the surface. Fullscreen can
+    // only be entered from a user gesture, so it is left to the JS shell.
+    Uint32 videoFlags = 0;
+    if (m_deviceConfig->resizeable)
+        videoFlags |= SDL_WINDOW_RESIZABLE;
+
+    m_private->window = SDL_CreateWindow(m_windowTitle.c_str(),
+                                         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+                                         m_deviceConfig->size.x, m_deviceConfig->size.y,
+                                         videoFlags);
+    return m_private->window != nullptr;
+#else
     Uint32 videoFlags = SDL_WINDOW_OPENGL;
 
     if (m_deviceConfig->fullScreen)
@@ -841,10 +859,14 @@ bool CApplication::CreateVideoSurface()
     }
 
     return true;
+#endif
 }
 
 void CApplication::TryToSetVSync()
 {
+#ifdef __EMSCRIPTEN__
+    m_engine->SetVSync(1); // browser presents on rAF
+#else
     int vsync = m_engine->GetVSync();
     int result = SDL_GL_SetSwapInterval(vsync);
     if (result == -1)
@@ -867,6 +889,7 @@ void CApplication::TryToSetVSync()
             break;
         }
     }
+#endif
 }
 
 bool CApplication::ChangeVideoConfig(const Gfx::DeviceConfig &newConfig, bool isSetSize)
@@ -878,7 +901,10 @@ bool CApplication::ChangeVideoConfig(const Gfx::DeviceConfig &newConfig, bool is
         // It appears that "doesn't work" means "is a no-op"
         SDL_SetWindowSize(m_private->window, m_deviceConfig->size.x, m_deviceConfig->size.y);
     }
+#ifndef __EMSCRIPTEN__
+    // Web: fullscreen requires a user gesture and is handled by the JS shell
     SDL_SetWindowFullscreen(m_private->window, m_deviceConfig->fullScreen ? SDL_WINDOW_FULLSCREEN : 0);
+#endif
 
     TryToSetVSync();
 
@@ -1038,7 +1064,7 @@ void CApplication::SetMsPerFrame(Uint32 ms)
     m_msPerFrame = ms;
 }
 
-int CApplication::Run()
+void CApplication::BeginRun()
 {
     m_active = true;
 
@@ -1048,157 +1074,177 @@ int CApplication::Run()
 
     MoveMouse({ 0.5f, 0.5f }); // center mouse on start
 
+    m_nextFrameStart = SDL_GetTicks();
+}
+
+int CApplication::Run()
+{
+    BeginRun();
+    while (Frame())
+    {
+    }
+    return m_exitCode;
+}
+
+bool CApplication::Frame()
+{
     TimeStamp previousTimeStamp{};
     TimeStamp currentTimeStamp{};
     TimeStamp interpolatedTimeStamp{};
 
-    Uint32 nextFrameStart = SDL_GetTicks();
-    while (true)
+#ifndef __EMSCRIPTEN__
+    // On the web, frame pacing is done by requestAnimationFrame in JS
+    Sint32 diff = static_cast<Sint32>(m_nextFrameStart - SDL_GetTicks());
+    if(diff > 0)
     {
-        Sint32 diff = static_cast<Sint32>(nextFrameStart - SDL_GetTicks());
-        if(diff > 0)
-        {
-            SDL_Delay(diff);
-        }
-        nextFrameStart = SDL_GetTicks() + m_msPerFrame;
+        SDL_Delay(diff);
+    }
+    m_nextFrameStart = SDL_GetTicks() + m_msPerFrame;
+#endif
 
+    if (m_active)
+    {
+        CProfiler::StartPerformanceCounter(PCNT_ALL);
+        CProfiler::StartPerformanceCounter(PCNT_EVENT_PROCESSING);
+    }
+
+    // To be sure no old event remains
+    m_private->currentEvent.type = SDL_LASTEVENT;
+
+    // Call SDL_PumpEvents() only once here
+    // (SDL_PeepEvents() doesn't call it)
+#ifdef __EMSCRIPTEN__
+    SDL_PumpEvents();
+#else
+    if (m_active)
+        SDL_PumpEvents();
+#endif
+
+    m_private->lastMouseMotionEvent.type = SDL_LASTEVENT;
+
+    bool haveEvent = true;
+    while (haveEvent)
+    {
+        haveEvent = false;
+
+        int count = 0;
+        // Use SDL_PeepEvents() if the app is active, so we can use idle time to
+        // render the scene. Else, use SDL_WaitEvent() to avoid eating CPU time.
+#ifdef __EMSCRIPTEN__
+        // Never block the browser thread
+        count = SDL_PeepEvents(&m_private->currentEvent, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT);
+#else
         if (m_active)
+            count = SDL_PeepEvents(&m_private->currentEvent, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT);
+        else
+            count = SDL_WaitEvent(&m_private->currentEvent);
+#endif
+
+        // If received an event
+        if (count > 0)
         {
-            CProfiler::StartPerformanceCounter(PCNT_ALL);
-            CProfiler::StartPerformanceCounter(PCNT_EVENT_PROCESSING);
-        }
+            haveEvent = true;
 
-        // To be sure no old event remains
-        m_private->currentEvent.type = SDL_LASTEVENT;
-
-        // Call SDL_PumpEvents() only once here
-        // (SDL_PeepEvents() doesn't call it)
-        if (m_active)
-            SDL_PumpEvents();
-
-        m_private->lastMouseMotionEvent.type = SDL_LASTEVENT;
-
-        bool haveEvent = true;
-        while (haveEvent)
-        {
-            haveEvent = false;
-
-            int count = 0;
-            // Use SDL_PeepEvents() if the app is active, so we can use idle time to
-            // render the scene. Else, use SDL_WaitEvent() to avoid eating CPU time.
-            if (m_active)
-                count = SDL_PeepEvents(&m_private->currentEvent, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT);
-            else
-                count = SDL_WaitEvent(&m_private->currentEvent);
-
-            // If received an event
-            if (count > 0)
+            // Skip mouse motion events, for now
+            if (m_private->currentEvent.type == SDL_MOUSEMOTION)
             {
-                haveEvent = true;
-
-                // Skip mouse motion events, for now
-                if (m_private->currentEvent.type == SDL_MOUSEMOTION)
-                {
-                    m_private->lastMouseMotionEvent = m_private->currentEvent;
-                    continue;
-                }
-
-                Event event = ProcessSystemEvent();
-
-                if (event.type == EVENT_SYS_QUIT)
-                    goto end; // exit the loop
-
-                Event virtualEvent = CreateVirtualEvent(event);
-
-                if (event.type != EVENT_NULL)
-                    m_eventQueue->AddEvent(std::move(event));
-
-                if (virtualEvent.type != EVENT_NULL)
-                    m_eventQueue->AddEvent(std::move(virtualEvent));
+                m_private->lastMouseMotionEvent = m_private->currentEvent;
+                continue;
             }
-        }
-
-        // Now, process the last received mouse motion
-        if (m_private->lastMouseMotionEvent.type != SDL_LASTEVENT)
-        {
-            m_private->currentEvent = m_private->lastMouseMotionEvent;
 
             Event event = ProcessSystemEvent();
 
             if (event.type == EVENT_SYS_QUIT)
-                goto end; // exit the loop
+                return false; // exit the loop
+
+            Event virtualEvent = CreateVirtualEvent(event);
 
             if (event.type != EVENT_NULL)
                 m_eventQueue->AddEvent(std::move(event));
-        }
 
-        // Enter game update & frame rendering only if active
-        if (m_active)
-        {
-            while (! m_eventQueue->IsEmpty())
-            {
-                Event event = m_eventQueue->GetEvent();
-
-                if (event.type == EVENT_SYS_QUIT || event.type == EVENT_QUIT)
-                    goto end; // exit both loops
-
-                LogEvent(event);
-
-                m_input->EventProcess(event);
-
-                bool passOn = true;
-                if (m_engine != nullptr)
-                    passOn = m_engine->ProcessEvent(event);
-
-                if (passOn && m_controller != nullptr)
-                    m_controller->ProcessEvent(event);
-            }
-
-            CProfiler::StopPerformanceCounter(PCNT_EVENT_PROCESSING);
-
-            CProfiler::StartPerformanceCounter(PCNT_UPDATE_ALL);
-
-            // Prepare and process step simulation event(s)
-            // If game speed is increased then we do extra ticks per loop iteration to improve physics accuracy.
-            int numTickSlices = static_cast<int>(GetSimulationSpeed());
-            if(numTickSlices < 1) numTickSlices = 1;
-            previousTimeStamp = m_curTimeStamp;
-            currentTimeStamp = TimeUtils::GetCurrentTimeStamp();
-            for(int tickSlice = 0; tickSlice < numTickSlices; tickSlice++)
-            {
-                interpolatedTimeStamp = TimeUtils::Lerp(previousTimeStamp, currentTimeStamp, (tickSlice+1)/static_cast<float>(numTickSlices));
-                Event event = CreateUpdateEvent(interpolatedTimeStamp);
-                if (event.type != EVENT_NULL && m_controller != nullptr)
-                {
-                    LogEvent(event);
-
-                    m_sound->FrameMove(m_relTime);
-
-                    CProfiler::StartPerformanceCounter(PCNT_UPDATE_GAME);
-                    m_controller->ProcessEvent(event);
-                    CProfiler::StopPerformanceCounter(PCNT_UPDATE_GAME);
-
-                    CProfiler::StartPerformanceCounter(PCNT_UPDATE_ENGINE);
-                    m_engine->FrameUpdate();
-                    CProfiler::StopPerformanceCounter(PCNT_UPDATE_ENGINE);
-                }
-            }
-
-            CProfiler::StopPerformanceCounter(PCNT_UPDATE_ALL);
-
-            /* Update mouse position explicitly right before rendering
-             * because mouse events are usually way behind */
-            UpdateMouse();
-
-            Render();
-
-            CProfiler::StopPerformanceCounter(PCNT_ALL);
+            if (virtualEvent.type != EVENT_NULL)
+                m_eventQueue->AddEvent(std::move(virtualEvent));
         }
     }
 
-end:
+    // Now, process the last received mouse motion
+    if (m_private->lastMouseMotionEvent.type != SDL_LASTEVENT)
+    {
+        m_private->currentEvent = m_private->lastMouseMotionEvent;
 
-    return m_exitCode;
+        Event event = ProcessSystemEvent();
+
+        if (event.type == EVENT_SYS_QUIT)
+            return false; // exit the loop
+
+        if (event.type != EVENT_NULL)
+            m_eventQueue->AddEvent(std::move(event));
+    }
+
+    // Enter game update & frame rendering only if active
+    if (m_active)
+    {
+        while (! m_eventQueue->IsEmpty())
+        {
+            Event event = m_eventQueue->GetEvent();
+
+            if (event.type == EVENT_SYS_QUIT || event.type == EVENT_QUIT)
+                return false; // exit both loops
+
+            LogEvent(event);
+
+            m_input->EventProcess(event);
+
+            bool passOn = true;
+            if (m_engine != nullptr)
+                passOn = m_engine->ProcessEvent(event);
+
+            if (passOn && m_controller != nullptr)
+                m_controller->ProcessEvent(event);
+        }
+
+        CProfiler::StopPerformanceCounter(PCNT_EVENT_PROCESSING);
+
+        CProfiler::StartPerformanceCounter(PCNT_UPDATE_ALL);
+
+        // Prepare and process step simulation event(s)
+        // If game speed is increased then we do extra ticks per loop iteration to improve physics accuracy.
+        int numTickSlices = static_cast<int>(GetSimulationSpeed());
+        if(numTickSlices < 1) numTickSlices = 1;
+        previousTimeStamp = m_curTimeStamp;
+        currentTimeStamp = TimeUtils::GetCurrentTimeStamp();
+        for(int tickSlice = 0; tickSlice < numTickSlices; tickSlice++)
+        {
+            interpolatedTimeStamp = TimeUtils::Lerp(previousTimeStamp, currentTimeStamp, (tickSlice+1)/static_cast<float>(numTickSlices));
+            Event event = CreateUpdateEvent(interpolatedTimeStamp);
+            if (event.type != EVENT_NULL && m_controller != nullptr)
+            {
+                LogEvent(event);
+
+                m_sound->FrameMove(m_relTime);
+
+                CProfiler::StartPerformanceCounter(PCNT_UPDATE_GAME);
+                m_controller->ProcessEvent(event);
+                CProfiler::StopPerformanceCounter(PCNT_UPDATE_GAME);
+
+                CProfiler::StartPerformanceCounter(PCNT_UPDATE_ENGINE);
+                m_engine->FrameUpdate();
+                CProfiler::StopPerformanceCounter(PCNT_UPDATE_ENGINE);
+            }
+        }
+
+        CProfiler::StopPerformanceCounter(PCNT_UPDATE_ALL);
+
+        /* Update mouse position explicitly right before rendering
+         * because mouse events are usually way behind */
+        UpdateMouse();
+
+        Render();
+
+        CProfiler::StopPerformanceCounter(PCNT_ALL);
+    }
+
+    return true;
 }
 
 int CApplication::GetExitCode() const
@@ -1483,8 +1529,10 @@ void CApplication::Render()
     CProfiler::StopPerformanceCounter(PCNT_RENDER_ALL);
 
     CProfiler::StartPerformanceCounter(PCNT_SWAP_BUFFERS);
+#ifndef __EMSCRIPTEN__
     if (m_deviceConfig->doubleBuf)
         SDL_GL_SwapWindow(m_private->window);
+#endif
     CProfiler::StopPerformanceCounter(PCNT_SWAP_BUFFERS);
 }
 
@@ -1532,7 +1580,7 @@ void CApplication::InternalResumeSimulation()
 
 void CApplication::StartLoadingMusic()
 {
-    std::thread{[this]()
+    auto load = [this]()
     {
         GetLogger()->Debug("Cache sounds...");
         TimeStamp musicLoadStart{TimeUtils::GetCurrentTimeStamp()};
@@ -1543,7 +1591,12 @@ void CApplication::StartLoadingMusic()
         TimeStamp musicLoadEnd{TimeUtils::GetCurrentTimeStamp()};
         float musicLoadTime = TimeUtils::Diff<TimeUnit::MILLISECONDS>(musicLoadStart, musicLoadEnd);
         GetLogger()->Debug("Sound loading took %% ms", static_cast<int>(musicLoadTime));
-    }}.detach();
+    };
+#ifdef __EMSCRIPTEN__
+    load(); // no threads on the web; sound decoding is lazy
+#else
+    std::thread{load}.detach();
+#endif
 }
 
 bool CApplication::GetSimulationSuspended() const
@@ -1741,7 +1794,9 @@ void CApplication::MoveMouse(const glm::vec2& pos)
 {
     glm::ivec2 windowPos = m_engine->InterfaceToWindowCoords(pos);
     m_input->MouseMove(windowPos);
+#ifndef __EMSCRIPTEN__
     SDL_WarpMouseInWindow(m_private->window, windowPos.x, windowPos.y);
+#endif
 }
 
 std::vector<JoystickDevice> CApplication::GetJoystickList() const

@@ -174,8 +174,12 @@ public:
     bool        Create();
     //! Reloads the application resources, e.g. mods
     void        ReloadResources();
-    //! Main event loop
+    //! Main event loop (native: BeginRun() + while (Frame()))
     int         Run();
+    //! Prepares state for the main loop (called once before the first Frame())
+    void        BeginRun();
+    //! Runs one main loop iteration; returns false when the application should exit
+    bool        Frame();
     //! Returns the code to be returned at main() exit
     int         GetExitCode() const;
 
@@ -434,4 +438,6 @@ protected:
     std::map<int, bool> m_textInputEnabled;
 
     Uint32 m_msPerFrame = 0;
+    //! Tick at which the next frame should start (native frame limiter)
+    Uint32 m_nextFrameStart = 0;
 };
