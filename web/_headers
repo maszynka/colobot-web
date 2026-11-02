@@ -4,13 +4,13 @@
 
 /*.wasm
   Content-Type: application/wasm
-  Cache-Control: no-cache
 
+# Content-addressed (name.<sha256>.ext, see tools/build-data/build.mjs): safe to cache forever.
+# "! Cache-Control" drops the /* value first; otherwise Cloudflare joins both with a comma.
 /data/*
+  ! Cache-Control
   Cache-Control: public, max-age=31536000, immutable
 
 /data/manifest.json
-  Cache-Control: no-cache
-
-/sw.js
+  ! Cache-Control
   Cache-Control: no-cache

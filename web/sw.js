@@ -1,22 +1,20 @@
-// Cache-first for content-addressed data (keyed by manifest sha256), network-first for the rest.
-const CACHE = 'colobot-v2';
-const DATA = 'colobot-data';
-let hashesP = null; // Promise<pathname -> sha256> from data/manifest.json (packs + loose files)
+// Data URLs are content-addressed (name.<sha256[:12]>.ext, tools/build-data/build.mjs), so
+// /data/* is cache-first forever; everything else (html/js/wasm/manifest) is network-first.
+// Whenever a fresh manifest.json passes through, data entries it no longer references are pruned.
+const CACHE = 'colobot-v3';
+const DATA = 'colobot-data-v2';
 
-function loadHashes() { return hashesP || (hashesP = readHashes()); }
-async function readHashes() {
-  let hashes = {};
+async function pruneData(manifestResp) {
   try {
-    const m = await (await fetch('data/manifest.json', { cache: 'no-cache' })).json();
-    hashes = {};
-    for (const p of Object.values(m.packs || {})) {
-      hashes[new URL('data/' + p.url, self.location).pathname] = p.sha256;
-      if (p.gz) hashes[new URL('data/' + p.gz.url, self.location).pathname] = p.gz.sha256;
-    }
-    for (const f of Object.values(m.files || {}))
-      if (!f.pack && f.url) hashes[new URL('data/' + f.url, self.location).pathname] = f.sha256;
-  } catch (e) { hashesP = null; hashes = {}; }
-  return hashes;
+    const m = await manifestResp.json();
+    const keep = new Set();
+    const add = (u) => keep.add(new URL('data/' + u, self.location).pathname);
+    for (const p of Object.values(m.packs || {})) { add(p.url); if (p.gz) add(p.gz.url); }
+    for (const f of Object.values(m.files || {})) if (!f.pack && f.url) add(f.url);
+    const cache = await caches.open(DATA);
+    for (const k of await cache.keys())
+      if (!keep.has(new URL(k.url).pathname)) await cache.delete(k);
+  } catch (e) { /* offline or malformed: keep what we have */ }
 }
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -30,26 +28,14 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET' || req.headers.has('range')) return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
-  if (url.pathname.includes('/data/') && !url.pathname.endsWith('manifest.json')) {
+  const isManifest = url.pathname.endsWith('/data/manifest.json');
+  if (url.pathname.includes('/data/') && !isManifest) {
     e.respondWith((async () => {
-      // Never hold a data request on the manifest round trip: until the hash table is loaded,
-      // go straight to the network (uncached) and let the table load in the background.
-      const pending = loadHashes();
-      const table = await Promise.race([pending, Promise.resolve(null)]);
-      const h = table && table[url.pathname];
-      if (!h) return fetch(req);
-      const key = url.origin + url.pathname + '?h=' + h;
       const cache = await caches.open(DATA);
-      const hit = await cache.match(key);
+      const hit = await cache.match(url.pathname);
       if (hit) return hit;
-      // Data names are not content-addressed: revalidate so a stale HTTP-cache copy never
-      // gets stored under the new hash.
-      const resp = await fetch(req, { cache: 'no-cache' });
-      if (resp.ok) {
-        cache.put(key, resp.clone());
-        for (const k of await cache.keys())
-          if (k.url.startsWith(url.origin + url.pathname + '?h=') && k.url !== key) cache.delete(k);
-      }
+      const resp = await fetch(req);
+      if (resp.ok && resp.status === 200) e.waitUntil(cache.put(url.pathname, resp.clone()));
       return resp;
     })());
     return;
@@ -57,8 +43,11 @@ self.addEventListener('fetch', (e) => {
   // html / js / wasm / manifest: network-first, cache fallback offline
   e.respondWith((async () => {
     try {
-      const resp = await fetch(req);
-      if (resp.ok) (await caches.open(CACHE)).put(req, resp.clone());
+      const resp = await fetch(req, isManifest ? { cache: 'no-cache' } : undefined);
+      if (resp.ok) {
+        e.waitUntil((await caches.open(CACHE)).put(req, resp.clone()));
+        if (isManifest) e.waitUntil(pruneData(resp.clone()));
+      }
       return resp;
     } catch (err) {
       const hit = await caches.match(req);

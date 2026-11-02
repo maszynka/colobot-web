@@ -58,10 +58,19 @@ async function main() {
   // boot.pak.gz (gzip, inflated here: .pak is octet-stream, which the CDN does not compress);
   // falls back to the raw pack.
   const onPak = (g, t) => { progress.pak = [g, t || g + 1]; update(); };
-  const pakP = fetchProgress('data/boot.pak.gz', onPak)
-    .then((r) => new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer())
-    .catch(() => fetchProgress('data/boot.pak', onPak).then((r) => r.arrayBuffer()));
-  const manifestP = fetch('data/manifest.json').then((r) => r.json());
+  // Data URLs are content-addressed (boot.<sha>.pak.gz); assemble-dist.sh writes the current
+  // name into the <link data-boot> preload so the fetch starts before manifest.json arrives.
+  const manifestP = fetch('data/manifest.json', { cache: 'no-cache' }).then((r) => r.json());
+  const inflate = (r) => new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  const bootLink = document.querySelector('link[data-boot]');
+  const fromManifest = () => manifestP.then((m) => {
+    const b = m.packs.boot;
+    return b.gz ? fetchProgress('data/' + b.gz.url, onPak).then(inflate)
+      .catch(() => fetchProgress('data/' + b.url, onPak).then((r) => r.arrayBuffer()))
+      : fetchProgress('data/' + b.url, onPak).then((r) => r.arrayBuffer());
+  });
+  const pakP = (bootLink ? fetchProgress(bootLink.getAttribute('href'), onPak).then(inflate) : Promise.reject())
+    .catch(fromManifest);
   wasmRespP.catch(() => {}); pakP.catch(() => {}); manifestP.catch(() => {});
 
   const canvas = $('canvas');

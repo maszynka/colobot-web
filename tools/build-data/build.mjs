@@ -99,13 +99,25 @@ fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
 const manifest = { version: 1, packs: {}, files: {} };
 
+// Content-addressed URLs (name.<sha256[:12]>.ext): a redeploy can never pair a new manifest with a
+// stale pack from the HTTP/CDN cache, and /data/* is safely `immutable`.
+const hashed = (rel, h) => {
+  const dir = path.posix.dirname(rel), base = path.posix.basename(rel);
+  const dot = base.indexOf('.');
+  const name = dot < 0 ? `${base}.${h.slice(0, 12)}` : `${base.slice(0, dot)}.${h.slice(0, 12)}${base.slice(dot)}`;
+  return dir === '.' ? name : `${dir}/${name}`;
+};
+
 function emitPack(name, rels, limit) {
   let part = 1, cur = [], size = 0;
   const flush = () => {
     if (!cur.length) return;
     const pn = part === 1 ? name : `${name}-${part}`;
-    const r = writeZip(cur, path.join(OUT, pn + '.pak'));
-    manifest.packs[pn] = { url: pn + '.pak', size: r.size, sha256: r.sha256 };
+    const tmp = path.join(OUT, pn + '.pak');
+    const r = writeZip(cur, tmp);
+    const url = hashed(pn + '.pak', r.sha256);
+    fs.renameSync(tmp, path.join(OUT, url));
+    manifest.packs[pn] = { url, size: r.size, sha256: r.sha256 };
     for (const [p, v] of Object.entries(r.files)) manifest.files[p] = { pack: pn, ...v };
     log(pn.padEnd(28), (r.size / 1048576).toFixed(2).padStart(7), 'MiB', cur.length, 'files');
     if (r.size > limit) warn(pn, 'exceeds limit', limit);
@@ -119,19 +131,21 @@ function emitPack(name, rels, limit) {
   flush();
 }
 function emitLoose(rel, data) {
-  fs.mkdirSync(path.dirname(path.join(OUT, rel)), { recursive: true });
-  fs.writeFileSync(path.join(OUT, rel), data);
-  manifest.files[rel] = { pack: null, url: rel, size: data.length, sha256: sha256(data) };
+  const h = sha256(data), url = hashed(rel, h);
+  fs.mkdirSync(path.dirname(path.join(OUT, url)), { recursive: true });
+  fs.writeFileSync(path.join(OUT, url), data);
+  manifest.files[rel] = { pack: null, url, size: data.length, sha256: h };
 }
 emitPack('boot', groups.get('boot') || [], BOOT_MAX); groups.delete('boot');
 // boot.pak is fetched before the first frame and served as application/octet-stream, which
 // Cloudflare does not compress: ship a gzip twin that loader.js inflates (DecompressionStream).
 {
-  const raw = fs.readFileSync(path.join(OUT, 'boot.pak'));
+  const raw = fs.readFileSync(path.join(OUT, manifest.packs.boot.url));
   const gz = zlib.gzipSync(raw, { level: 9 });
-  fs.writeFileSync(path.join(OUT, 'boot.pak.gz'), gz);
-  manifest.packs.boot.gz = { url: 'boot.pak.gz', size: gz.length, sha256: sha256(gz) };
-  log('boot.pak.gz'.padEnd(28), (gz.length / 1048576).toFixed(2).padStart(7), 'MiB');
+  const gzUrl = hashed('boot.pak.gz', sha256(gz));
+  fs.writeFileSync(path.join(OUT, gzUrl), gz);
+  manifest.packs.boot.gz = { url: gzUrl, size: gz.length, sha256: sha256(gz) };
+  log(gzUrl.padEnd(28), (gz.length / 1048576).toFixed(2).padStart(7), 'MiB');
 }
 let looseN = 0, looseB = 0;
 for (const [g, rels] of groups) {
