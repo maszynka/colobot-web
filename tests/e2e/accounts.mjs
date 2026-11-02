@@ -2,6 +2,9 @@
 //   1. browser A: register (email+password) -> create the default player -> saves upload to /api/saves
 //   2. "Download saves" from the account menu produces a valid zip containing the player
 //   3. browser B (fresh profile): sign in -> the player from A is restored before the game reads /save
+//      + colobot.json (device settings) is not in the cloud archive and not uploaded alone
+//      + offline start (API unreachable) stays in cloud mode, keeps the change pending and uploads
+//        it when the API is back; a second tab does not sync (Web Lock)
 //   4. browser C: "Play locally" -> creating a player never calls /api/saves
 // Usage: node tests/e2e/accounts.mjs [--headed] [--port 8790]   (needs dist/, see docs/STATUS.md)
 import { spawn, execFileSync } from 'node:child_process';
@@ -126,6 +129,73 @@ try {
   await B.page.reload();
   await ready(B.page);
   check('session survives reload (no chooser)', (await B.page.locator('.acct-modal').count()) === 0);
+
+  // ---- colobot.json is per device ----
+  const cloudZip = await B.page.evaluate(async () => Array.from(new Uint8Array(await (await fetch('/api/saves/latest')).arrayBuffer())));
+  const cloudPaths = (await readZip(new Uint8Array(cloudZip))).map((e) => e.path);
+  check('cloud archive has no colobot.json', cloudPaths.length > 0 && !cloudPaths.includes('colobot.json'), cloudPaths);
+  const settingsOnly = await B.page.evaluate(async () => {
+    const FS = window.Module.FS, p = '/save/colobot.json';
+    const old = FS.analyzePath(p).exists ? FS.readFile(p) : null;
+    FS.writeFile(p, JSON.stringify({ e2e: Date.now() }));
+    const r = await window.__colobotAccount.syncNow();
+    if (old) FS.writeFile(p, old);
+    return r;
+  });
+  check('settings-only change is not uploaded', settingsOnly === 'unchanged', settingsOnly);
+
+  // ---- second tab: no sync ----
+  const B2 = await B.ctx.newPage();
+  await B2.goto(url);
+  await ready(B2);
+  const tabs = [await B.page.evaluate(() => window.__colobotAccount.secondary), await B2.evaluate(() => window.__colobotAccount.secondary)];
+  check('second tab is secondary (Web Lock), first is not', !tabs[0] && tabs[1], tabs);
+  await B2.close();
+
+  // ---- offline start: stays cloud, change pending, uploaded when back ----
+  await B.page.route('**/api/**', (r) => r.abort());
+  await B.page.reload();
+  await ready(B.page);
+  const off = await B.page.evaluate(() => ({
+    mode: window.__colobotAccount.mode, offline: window.__colobotAccount.offline,
+    stored: localStorage.getItem('colobot.mode'), badge: document.getElementById('acct-badge').textContent,
+  }));
+  check('offline start keeps cloud mode (badge offline, mode remembered)', off.mode === 'cloud' && off.offline && off.stored === 'cloud' && off.badge.includes(EMAIL), off);
+  const pending = await B.page.evaluate(async () => {
+    window.Module.FS.writeFile('/save/offline-test.txt', 'played offline');
+    await window.Module.__wfsFlushNow();
+    return window.__colobotAccount.syncNow();
+  });
+  check('offline change is not uploaded while offline', pending === 'failed', pending);
+  await B.page.unroute('**/api/**');
+  await B.page.evaluate(() => dispatchEvent(new Event('online')));
+  let v4 = null;
+  for (let t = 0; t < 30 && !(v4 && v4.version === 4); t++) {
+    await B.page.waitForTimeout(500);
+    v4 = await B.page.evaluate(async () => (await (await fetch('/api/saves', { cache: 'no-store' })).json()).latest);
+  }
+  const back = await B.page.evaluate(() => ({ offline: window.__colobotAccount.offline, mode: window.__colobotAccount.mode }));
+  const v4zip = v4 && v4.version === 4 ? await B.page.evaluate(async () => Array.from(new Uint8Array(await (await fetch('/api/saves/4')).arrayBuffer()))) : [];
+  const v4paths = v4zip.length ? (await readZip(new Uint8Array(v4zip))).map((e) => e.path) : [];
+  check('back online: pending change uploaded as v4', v4paths.includes('offline-test.txt') && !back.offline && back.mode === 'cloud', { v4, back, v4paths });
+
+  // ---- shared browser: sign out (keep saves), a different account must not silently get them ----
+  await B.page.locator('#acct-badge').click();
+  await B.page.getByRole('menuitem', { name: 'Sign out' }).click();
+  await Promise.all([B.page.waitForNavigation({ timeout: 30000 }), B.page.getByRole('button', { name: 'Sign out, keep saves here' }).click()]);
+  await B.page.getByRole('button', { name: 'Email and password' }).click();
+  await B.page.getByRole('button', { name: 'I need an account' }).click();
+  await B.page.getByPlaceholder('email').fill('other' + EMAIL);
+  await B.page.getByPlaceholder(/password/).fill(PASS);
+  await B.page.getByRole('button', { name: 'Create account' }).click();
+  const asked = await B.page.getByText('Saves from another account').waitFor({ timeout: 90000 }).then(() => true, () => false);
+  if (asked) await B.page.getByRole('button', { name: 'Start fresh' }).click();
+  await ready(B.page);
+  await B.page.waitForTimeout(2000);
+  const other = await B.page.evaluate(async () => (await (await fetch('/api/saves', { cache: 'no-store' })).json()).latest);
+  const left = await listSave(B.page);
+  check('other account is asked; "Start fresh" uploads nothing and clears this browser',
+    asked && !left.includes('/save/offline-test.txt') && (!other || !other.hash || other.size < 300), { asked, other, left });
   await B.ctx.close();
 
   // ---- 4. local mode never touches /api/saves ----
