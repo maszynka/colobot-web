@@ -68,7 +68,9 @@ void CWebGPUVertexBuffer::Update()
     uint64_t bytes = AlignUp(std::max<uint64_t>(count * sizeof(Vertex3D), 4), 4);
     if (!m_buffer || bytes > m_capacity)
     {
-        if (m_buffer) m_buffer.Destroy();
+        // Release only: Destroy() is immediate and would invalidate a pass already recorded
+        // this frame that still references the old buffer (the GC frees it after submit).
+        m_buffer = nullptr;
         wgpu::BufferDescriptor desc;
         desc.label = "static-vertex-buffer";
         desc.size = bytes;

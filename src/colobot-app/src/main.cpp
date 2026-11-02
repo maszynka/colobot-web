@@ -212,11 +212,17 @@ int main(int argc, char *argv[])
         logFileName = systemUtils.GetSaveDir() / "log.txt";
     }
 
+#ifndef __EMSCRIPTEN__
     COLOBOT_PERSIST std::ofstream logFile(logFileName);
     if (logFile)
         logger.AddOutput(logFile);
     else
         logger.Error("Failed to create log file, writing log to file disabled");
+#else
+    // Web: the console is the log; a log file would land in IDBFS-backed /save (mounted later,
+    // over this MEMFS dir) and be re-synced to IndexedDB on every save.
+    (void)logFileName;
+#endif
 
     logger.Info("%% starting", Version::FULL_NAME);
 
