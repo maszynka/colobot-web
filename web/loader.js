@@ -99,7 +99,8 @@ async function main() {
     print: (...a) => console.log(...a),
     printErr: (...a) => console.warn(...a),
     onSaveMounted: () => account.hooks.onSaveMounted(mod),
-    onSaveFlushed: () => { account.hooks.onSaveFlushed(); },
+    // The hook is called synchronously from C; a rejection is logged here, not left unhandled.
+    onSaveFlushed: () => { account.hooks.onSaveFlushed().catch((e) => console.warn('onSaveFlushed:', e)); },
     instantiateWasm(imports, done) {
       wasmRespP.then((r) => WebAssembly.instantiateStreaming(r, imports))
         .then((res) => done(res.instance, res.module))
