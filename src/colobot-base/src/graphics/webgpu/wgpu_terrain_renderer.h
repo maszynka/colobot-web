@@ -106,7 +106,7 @@ private:
     unsigned int m_materialTexture = 0;
 
     wgpu::BindGroup m_uniformGroup;
-    WGPUBuffer m_uniformGroupBuffer = nullptr;
+    wgpu::Buffer m_uniformGroupBuffer; // held: a raw handle could be freed and its address reused by the ring
     std::map<std::array<uint64_t, 4>, wgpu::BindGroup> m_textureGroups;
     uint64_t m_textureEpoch = ~0ull;
 };

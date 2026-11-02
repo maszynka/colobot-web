@@ -60,7 +60,8 @@ const auto& pipeline = m_device->Pipelines().Get(key, [this](const PipelineKey& 
 // CreatePipeline: set layout/vertex/entry points; call m_device->FillFixedFunction(k, desc, ff)
 // for blend/depth/cull/targets/multisample; then desc.fragment = &ff.fragment (if k.colorFormat != 0).
 // 3. uniforms: RingAllocation a = m_device->UniformRing().Upload(&u, sizeof(u));
-//    bind group for group(1) is keyed on a.buffer (recreate when the ring chunk changes),
+//    bind group for group(1) is keyed on a.buffer (recreate when the ring chunk changes);
+//    keep the key as a held wgpu::Buffer, never a raw WGPUBuffer: freed chunks' addresses get reused,
 //    pass->SetBindGroup(1, group, 1, &offset) with offset = a.offset (256-aligned).
 // 4. textures: m_device->Textures().Get(id) -> view + sampler (id 0 / unknown -> 1x1 white);
 //    cache bind groups by entry.serial; clear the cache when Textures().Epoch() changes.

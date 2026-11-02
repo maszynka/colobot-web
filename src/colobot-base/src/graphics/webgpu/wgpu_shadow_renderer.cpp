@@ -233,7 +233,7 @@ void CWebGPUShadowRenderer::DrawObject(const CVertexBuffer* buffer, bool transpa
 
     glm::mat4 mvp = m_projectionMatrix * m_viewMatrix * m_modelMatrix;
     RingAllocation a = m_device->UniformRing().Upload(&mvp, sizeof(mvp));
-    if (!m_uniformGroup || m_uniformGroupBuffer != a.buffer.Get())
+    if (!m_uniformGroup || m_uniformGroupBuffer.Get() != a.buffer.Get())
     {
         wgpu::BindGroupEntry entry;
         entry.binding = 0;
@@ -244,7 +244,7 @@ void CWebGPUShadowRenderer::DrawObject(const CVertexBuffer* buffer, bool transpa
         desc.entryCount = 1;
         desc.entries = &entry;
         m_uniformGroup = m_device->GetWGPUDevice().CreateBindGroup(&desc);
-        m_uniformGroupBuffer = a.buffer.Get();
+        m_uniformGroupBuffer = a.buffer;
     }
     uint32_t offset = static_cast<uint32_t>(a.offset);
 

@@ -309,7 +309,7 @@ void CWebGPUTerrainRenderer::DrawObject(const glm::mat4& matrix, const CVertexBu
 
     RingAllocation a = m_device->UniformRing().Upload(&m_uniforms, sizeof(Uniforms));
     uint32_t offset = static_cast<uint32_t>(a.offset);
-    if (!m_uniformGroup || m_uniformGroupBuffer != a.buffer.Get())
+    if (!m_uniformGroup || m_uniformGroupBuffer.Get() != a.buffer.Get())
     {
         wgpu::BindGroupEntry entry;
         entry.binding = 0;
@@ -320,7 +320,7 @@ void CWebGPUTerrainRenderer::DrawObject(const glm::mat4& matrix, const CVertexBu
         desc.entryCount = 1;
         desc.entries = &entry;
         m_uniformGroup = m_device->GetWGPUDevice().CreateBindGroup(&desc);
-        m_uniformGroupBuffer = a.buffer.Get();
+        m_uniformGroupBuffer = a.buffer;
     }
 
     pass->SetPipeline(pipeline);

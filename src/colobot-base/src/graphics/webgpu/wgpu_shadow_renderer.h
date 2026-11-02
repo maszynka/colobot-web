@@ -85,7 +85,7 @@ private:
     uint64_t m_textureEpoch = ~0ull;
     std::unordered_map<uint64_t, wgpu::BindGroup> m_textureGroups;
     wgpu::BindGroup m_uniformGroup;
-    WGPUBuffer m_uniformGroupBuffer = nullptr;
+    wgpu::Buffer m_uniformGroupBuffer; // held: a raw handle could be freed and its address reused by the ring
 };
 
 } // namespace Gfx
