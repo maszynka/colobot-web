@@ -28,6 +28,7 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET' || req.headers.has('range')) return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
+  if (url.pathname.startsWith('/api/')) return; // accounts + saves: never cached
   const isManifest = url.pathname.endsWith('/data/manifest.json');
   if (url.pathname.includes('/data/') && !isManifest) {
     e.respondWith((async () => {

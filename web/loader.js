@@ -3,6 +3,9 @@
 //   Module.dataBaseUrl  'data/' (manifest.json and loose files/packs live there)
 //   Module.canvas       <canvas id="canvas">
 //   Exports used: _colobot_frame() -> int (0 = quit), callMain([])
+//   Save hooks (web_archiver.c -> account.js): Module.onSaveMounted(), Module.onSaveFlushed()
+import { startAccount } from './account.js';
+
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
 const setProgress = (f) => { $('fill').style.width = Math.round(Math.min(1, f) * 100) + '%'; };
@@ -43,6 +46,10 @@ async function main() {
   if (!navigator.gpu) return unsupported('WebGPU (navigator.gpu) is not available.');
   if (typeof WebAssembly === 'undefined' || !WebAssembly.Suspending || !WebAssembly.promising)
     return unsupported('WebAssembly JSPI (WebAssembly.Suspending) is not available.');
+
+  // Sign-in / local choice runs in parallel with the download; the game waits for it only
+  // when it mounts /save (onSaveMounted), so cloud saves can be restored before they are read.
+  const account = startAccount();
 
   const progress = { wasm: [0, 1], pak: [0, 1] };
   const update = () => {
@@ -91,6 +98,8 @@ async function main() {
     dataBaseUrl: 'data/',
     print: (...a) => console.log(...a),
     printErr: (...a) => console.warn(...a),
+    onSaveMounted: () => account.hooks.onSaveMounted(mod),
+    onSaveFlushed: () => { account.hooks.onSaveFlushed(); },
     instantiateWasm(imports, done) {
       wasmRespP.then((r) => WebAssembly.instantiateStreaming(r, imports))
         .then((res) => done(res.instance, res.module))

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Colobot Web · Privacy</title>
+<style>
+:root{color-scheme:dark}
+body{margin:0;background:#0b0f14;color:#dfe6ee;font:16px/1.6 system-ui,sans-serif}
+main{max-width:720px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:24px;letter-spacing:.1em;color:#f5a623;text-transform:uppercase}
+h2{font-size:17px;margin-top:28px;color:#bfe3ff}
+a{color:#7cc7ff}
+button{padding:10px 14px;border:1px solid #c0503f;background:#3a1612;color:#ffd9d2;font:600 14px system-ui,sans-serif;cursor:pointer;border-radius:2px}
+button:disabled{opacity:.5;cursor:default}
+.pl{border-top:1px solid #1f2a36;margin-top:40px;padding-top:8px}
+#msg{margin-top:8px;color:#9fc3dc}
+</style>
+</head>
+<body>
+<main>
+<h1>Privacy</h1>
+<p>Colobot Web is a free, open-source browser port of Colobot (<a href="https://github.com/maszynka/colobot-web">source</a>). You can play without an account: in local mode nothing about you leaves your browser, and your saves stay in this browser's storage.</p>
+
+<h2>What is stored if you sign in</h2>
+<ul>
+<li><b>Email and password account:</b> your email address and a salted password hash (PBKDF2-SHA256). The password itself is never stored.</li>
+<li><b>Google sign-in:</b> your Google account ID (<code>sub</code>) and email address. We request only the <code>openid email</code> scopes.</li>
+<li><b>Sessions:</b> a random sign-in token in an HttpOnly cookie; the server keeps only its hash, for up to 30 days or until you sign out.</li>
+<li><b>Saved games:</b> a zip archive of your game's save folder (player profiles, saved missions, your CBOT programs, settings), with the last 10 versions, the upload time and a short device label such as "Windows Chrome".</li>
+<li><b>Abuse protection:</b> counters of failed sign-in attempts per IP address and email, kept for about 15 minutes.</li>
+</ul>
+<p>Data is stored on Cloudflare (Workers, D1, R2). It is used only to run the game's save sync, never sold or shared, and there is no tracking or advertising.</p>
+
+<h2>Deleting your data</h2>
+<p>Sign in, open the account badge in the top-right corner of the game and choose <b>Delete account and cloud saves</b>, or use the button below. This removes your account, sessions and every cloud save immediately. Saves in your browser are kept; you can remove them by clearing site data.</p>
+<button id="del" disabled>Delete my account and cloud saves</button>
+<div id="msg"></div>
+
+<div class="pl" lang="pl">
+<h2>Po polsku</h2>
+<p>Możesz grać bez konta — wtedy zapisy zostają tylko w tej przeglądarce. Po zalogowaniu przechowujemy: e-mail i skrót hasła (PBKDF2) albo identyfikator i e-mail konta Google, token sesji (jako skrót, do 30 dni) oraz archiwum zapisów gry (10 ostatnich wersji). Dane leżą w Cloudflare i służą wyłącznie do synchronizacji zapisów. Konto i wszystkie zapisy w chmurze usuniesz przyciskiem powyżej albo z menu konta w grze.</p>
+</div>
+<p><a href="/">← Back to the game</a></p>
+</main>
+<script>
+(async () => {
+  const del = document.getElementById('del'), msg = document.getElementById('msg');
+  let me;
+  try { me = await (await fetch('/api/me', { cache: 'no-store' })).json(); } catch (e) { msg.textContent = 'Account service unavailable.'; return; }
+  if (!me.user) { msg.textContent = 'You are not signed in.'; return; }
+  msg.textContent = 'Signed in as ' + (me.user.email || 'Google account') + '.';
+  del.disabled = false;
+  del.onclick = async () => {
+    if (!confirm('Delete your account and all cloud saves? This cannot be undone.')) return;
+    del.disabled = true;
+    const r = await fetch('/api/me', { method: 'DELETE', headers: { 'X-Colobot': '1' } });
+    msg.textContent = r.ok ? 'Your account and cloud saves were deleted.' : 'Deletion failed (' + r.status + '). Please try again.';
+    if (!r.ok) del.disabled = false;
+    try { localStorage.removeItem('colobot.mode'); } catch (e) {}
+  };
+})();
+</script>
+</body>
+</html>

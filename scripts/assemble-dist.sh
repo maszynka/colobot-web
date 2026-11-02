@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 BUILD="${1:-build-web}"; DATA="${2:-}"
 rm -rf dist && mkdir -p dist
 cp "$BUILD/src/colobot.js" "$BUILD/src/colobot.wasm" dist/
-cp web/index.html web/loader.js web/sw.js web/_headers dist/
+cp web/index.html web/privacy.html web/loader.js web/account.js web/zip.js web/sw.js web/_headers dist/
 if [ -n "$DATA" ]; then mkdir -p dist/data && cp -R "$DATA"/. dist/data/; fi
 # Data URLs are content-addressed: point the boot preload in index.html at the current boot pack.
 if [ -f dist/data/manifest.json ]; then

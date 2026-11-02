@@ -6,6 +6,7 @@
     "build-data": "node tools/build-data/build.mjs"
   },
   "devDependencies": {
-    "playwright": "^1.64.1"
+    "playwright": "^1.64.1",
+    "wrangler": "^4.156.2"
   }
 }

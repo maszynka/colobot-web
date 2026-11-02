@@ -7,6 +7,8 @@
 <title>Colobot</title>
 <!-- Start the critical downloads with the HTML instead of after loader.js runs (WP13). -->
 <link rel="modulepreload" href="loader.js">
+<link rel="modulepreload" href="account.js">
+<link rel="modulepreload" href="zip.js">
 <link rel="modulepreload" href="colobot.js">
 <link rel="preload" href="colobot.wasm" as="fetch" type="application/wasm" crossorigin>
 <link rel="preload" href="data/boot.pak.gz" as="fetch" crossorigin data-boot>
@@ -19,6 +21,35 @@ html,body{margin:0;height:100%;background:#0b0f14;color:#dfe6ee;font:15px system
 #bar{width:min(320px,70vw);height:6px;background:#1f2a36;border-radius:3px;overflow:hidden}
 #fill{height:100%;width:0;background:#f5a623;transition:width .15s}
 h1{margin:0;font-size:28px;letter-spacing:.1em}
+/* account overlay (account.js) */
+#acct-badge{position:fixed;top:8px;right:8px;z-index:5;max-width:min(60vw,360px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:5px 12px;border:1px solid #3d6f8f;border-radius:2px;background:rgba(8,22,34,.78);color:#bfe3ff;font:12px/1.3 system-ui,sans-serif;letter-spacing:.04em;cursor:pointer;opacity:.7}
+#acct-badge:hover,#acct-badge:focus-visible{opacity:1;border-color:#f5a623}
+#acct-badge[data-mode=local]{color:#ffd38a}
+#acct-menu{position:fixed;top:40px;right:8px;z-index:6;width:min(300px,calc(100vw - 16px));display:flex;flex-direction:column;padding:8px;gap:2px;background:#0d1b26f2;border:1px solid #3d6f8f;box-shadow:0 8px 30px #000a}
+#acct-menu button,#acct-menu a{all:unset;cursor:pointer;padding:8px 10px;color:#dfe6ee;font-size:14px}
+#acct-menu button:hover,#acct-menu a:hover,#acct-menu button:focus-visible,#acct-menu a:focus-visible{background:#1d3a50;color:#fff}
+#acct-menu .danger{color:#ff9b8a}
+.acct-modal{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(3,8,12,.72)}
+.acct-panel{width:min(420px,100%);max-height:100%;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:22px;background:linear-gradient(#10283a,#0b1824);border:1px solid #4a86ab;box-shadow:0 0 0 1px #0b0f14,0 12px 40px #000c;color:#dfe6ee}
+.acct-panel h2{margin:0;font-size:18px;letter-spacing:.12em;text-transform:uppercase;color:#f5a623}
+.acct-panel p{margin:0;line-height:1.45}
+.acct-panel form{display:flex;flex-direction:column;gap:8px}
+.acct-panel input{padding:10px;border:1px solid #3d6f8f;background:#06121b;color:#fff;font:15px system-ui,sans-serif;border-radius:2px}
+.acct-panel input:focus{outline:2px solid #f5a623;outline-offset:0}
+.acct-btn{padding:11px 14px;border:1px solid #4a86ab;background:#163650;color:#e9f5ff;font:600 14px system-ui,sans-serif;letter-spacing:.06em;cursor:pointer;border-radius:2px;text-align:center}
+.acct-btn:hover:not(:disabled),.acct-btn:focus-visible{background:#1f4b6d;border-color:#f5a623}
+.acct-btn.primary{background:#f5a623;border-color:#f5a623;color:#1a1204}
+.acct-btn.primary:hover:not(:disabled){background:#ffbe4d}
+.acct-btn.ghost{background:transparent}
+.acct-btn:disabled{opacity:.45;cursor:not-allowed}
+.acct-note{font-size:13px;color:#9fc3dc}
+.acct-err{color:#ff9b8a;font-size:14px;min-height:0}
+.acct-err:empty{display:none}
+.acct-link{all:unset;cursor:pointer;color:#7cc7ff;font-size:13px;text-decoration:underline}
+.acct-small{color:#7f9fb5;font-size:12px;align-self:flex-end}
+.acct-row{display:flex;flex-wrap:wrap;gap:6px 16px}
+#acct-toast{position:fixed;left:50%;bottom:16px;z-index:7;transform:translate(-50%,40px);opacity:0;pointer-events:none;display:flex;gap:12px;align-items:center;padding:8px 14px;background:#0d1b26f2;border:1px solid #3d6f8f;color:#dfe6ee;font-size:13px;transition:.2s}
+#acct-toast.show{transform:translate(-50%,0);opacity:1;pointer-events:auto}
 </style>
 </head>
 <body>
