@@ -1,7 +1,7 @@
 // Data URLs are content-addressed (name.<sha256[:12]>.ext, tools/build-data/build.mjs), so
 // /data/* is cache-first forever; everything else (html/js/wasm/manifest) is network-first.
 // Whenever a fresh manifest.json passes through, data entries it no longer references are pruned.
-const CACHE = 'colobot-v3';
+const CACHE = 'colobot-v4'; // v4: drop any /api responses an older SW cached
 const DATA = 'colobot-data-v2';
 
 async function pruneData(manifestResp) {
