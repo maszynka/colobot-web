@@ -1,10 +1,27 @@
 {
   "name": "colobot-web",
+  "main": "worker/index.js",
   "compatibility_date": "2026-01-01",
   "workers_dev": true,
   "routes": [{ "pattern": "colobot.codestiny.pl", "custom_domain": true }],
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "none"
-  }
+    "binding": "ASSETS",
+    "not_found_handling": "none",
+    // Static files are served without invoking the Worker; only the API runs code.
+    "run_worker_first": ["/api/*"]
+  },
+  // Accounts, sessions, save metadata (docs/ACCOUNTS.md). Migrations: migrations/.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "colobot-web",
+      "database_id": "203c200d-899a-4c11-869a-bb03a1f4b040",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Save archives (zip of /save), key u/<user>/<version>-<rand>.zip.
+  "r2_buckets": [{ "binding": "SAVES", "bucket_name": "colobot-web-saves" }],
+  "observability": { "enabled": true }
+  // Secrets (wrangler secret put): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET. Optional var GOOGLE_REDIRECT_URI.
 }
