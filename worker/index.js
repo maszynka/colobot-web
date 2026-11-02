@@ -1,7 +1,7 @@
 // Colobot web Worker: static assets (ASSETS) + /api/* (accounts and cloud saves).
 // Architecture, endpoints and setup: docs/ACCOUNTS.md.
 import {
-  hashPassword, verifyPassword, dummyVerify, randomToken, sha256Hex, sha256B64url, timingSafeEqual,
+  hashPassword, verifyPassword, dummyVerify, iterations, randomToken, sha256Hex, sha256B64url, timingSafeEqual,
 } from './crypto.js';
 
 const SESSION_COOKIE = 'colobot_session';
@@ -126,7 +126,7 @@ async function register(req, env) {
   await rateHit(env, 'register-ip', ip);
   const exists = await env.DB.prepare('SELECT 1 FROM users WHERE email = ?').bind(email).first();
   if (exists) throw new HttpError(409, 'email_taken');
-  const ph = await hashPassword(password);
+  const ph = await hashPassword(password, iterations(env));
   const id = crypto.randomUUID();
   try {
     await env.DB.prepare(
@@ -150,13 +150,20 @@ async function login(req, env) {
   const row = email && await env.DB.prepare(
     'SELECT id, email, password_hash, password_salt, password_iter FROM users WHERE email = ?',
   ).bind(email).first();
-  const ok = row && row.password_hash ? await verifyPassword(password, row) : await dummyVerify(password);
+  const iter = iterations(env);
+  const ok = row && row.password_hash ? await verifyPassword(password, row) : await dummyVerify(password, iter);
   if (!ok) {
     await rateHit(env, 'login-ip', ip);
     await rateHit(env, 'login-email', email);
     throw new HttpError(401, 'bad_credentials');
   }
   await rateClear(env, 'login-email', email);
+  if (row.password_iter !== iter) {
+    // Re-hash at the current cost (raised or lowered via PBKDF2_ITER); stored per user.
+    const ph = await hashPassword(password, iter);
+    await env.DB.prepare('UPDATE users SET password_hash = ?, password_salt = ?, password_iter = ? WHERE id = ?')
+      .bind(ph.hash, ph.salt, ph.iter, row.id).run();
+  }
   const c = await createSession(env, row.id);
   return json({ user: { id: row.id, email: row.email, provider: 'password' } }, 200, { 'Set-Cookie': c });
 }
