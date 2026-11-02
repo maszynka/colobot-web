@@ -57,6 +57,11 @@
 
 namespace Ui
 {
+
+// SatCom text size range (presets + slider); upper end raised from 24 for readability on large screens
+constexpr float FONT_SIZE_MIN = 9.0f;
+constexpr float FONT_SIZE_MAX = 48.0f;
+
 // Object's constructor.
 
 CDisplayInfo::CDisplayInfo()
@@ -162,30 +167,30 @@ bool CDisplayInfo::EventProcess(const Event &event)
 
         if ( event.type == EVENT_HYPER_SIZE1 )  // size 1?
         {
-            CSettings::GetInstancePointer()->SetFontSize(9.0f);
+            CSettings::GetInstancePointer()->SetFontSize(FONT_SIZE_MIN);
             slider = static_cast<Ui::CSlider*>(pw->SearchControl(EVENT_STUDIO_SIZE));
-            if ( slider != nullptr )  slider->SetVisibleValue((CSettings::GetInstancePointer()->GetFontSize()-9.0f)/15.0f);
+            if ( slider != nullptr )  slider->SetVisibleValue((CSettings::GetInstancePointer()->GetFontSize()-FONT_SIZE_MIN)/(FONT_SIZE_MAX-FONT_SIZE_MIN));
             ViewDisplayInfo();
         }
         if ( event.type == EVENT_HYPER_SIZE2 )  // size 2?
         {
-            CSettings::GetInstancePointer()->SetFontSize(14.0f);
+            CSettings::GetInstancePointer()->SetFontSize(18.0f);
             slider = static_cast<Ui::CSlider*>(pw->SearchControl(EVENT_STUDIO_SIZE));
-            if ( slider != nullptr )  slider->SetVisibleValue((CSettings::GetInstancePointer()->GetFontSize()-9.0f)/15.0f);
+            if ( slider != nullptr )  slider->SetVisibleValue((CSettings::GetInstancePointer()->GetFontSize()-FONT_SIZE_MIN)/(FONT_SIZE_MAX-FONT_SIZE_MIN));
             ViewDisplayInfo();
         }
         if ( event.type == EVENT_HYPER_SIZE3 )  // size 3?
         {
-            CSettings::GetInstancePointer()->SetFontSize(19.0f);
+            CSettings::GetInstancePointer()->SetFontSize(30.0f);
             slider = static_cast<Ui::CSlider*>(pw->SearchControl(EVENT_STUDIO_SIZE));
-            if ( slider != nullptr )  slider->SetVisibleValue((CSettings::GetInstancePointer()->GetFontSize()-9.0f)/15.0f);
+            if ( slider != nullptr )  slider->SetVisibleValue((CSettings::GetInstancePointer()->GetFontSize()-FONT_SIZE_MIN)/(FONT_SIZE_MAX-FONT_SIZE_MIN));
             ViewDisplayInfo();
         }
         if ( event.type == EVENT_HYPER_SIZE4 )  // size 4?
         {
-            CSettings::GetInstancePointer()->SetFontSize(24.0f);
+            CSettings::GetInstancePointer()->SetFontSize(40.0f);
             slider = static_cast<Ui::CSlider*>(pw->SearchControl(EVENT_STUDIO_SIZE));
-            if ( slider != nullptr )  slider->SetVisibleValue((CSettings::GetInstancePointer()->GetFontSize()-9.0f)/15.0f);
+            if ( slider != nullptr )  slider->SetVisibleValue((CSettings::GetInstancePointer()->GetFontSize()-FONT_SIZE_MIN)/(FONT_SIZE_MAX-FONT_SIZE_MIN));
             ViewDisplayInfo();
         }
 
@@ -193,7 +198,7 @@ bool CDisplayInfo::EventProcess(const Event &event)
         {
             slider = static_cast<Ui::CSlider*>(pw->SearchControl(EVENT_STUDIO_SIZE));
             if ( slider == nullptr )  return false;
-            CSettings::GetInstancePointer()->SetFontSize(9.0f+slider->GetVisibleValue()*15.0f);
+            CSettings::GetInstancePointer()->SetFontSize(FONT_SIZE_MIN+slider->GetVisibleValue()*(FONT_SIZE_MAX-FONT_SIZE_MIN));
             ViewDisplayInfo();
         }
 
@@ -425,7 +430,7 @@ void CDisplayInfo::StartDisplayInfo(const std::filesystem::path& filename, int i
     button->SetState(STATE_SHADOW);
     slider = pw->CreateSlider(pos, dim, 0, EVENT_STUDIO_SIZE);
     slider->SetState(STATE_SHADOW);
-    slider->SetVisibleValue((CSettings::GetInstancePointer()->GetFontSize()-9.0f)/15.0f);
+    slider->SetVisibleValue((CSettings::GetInstancePointer()->GetFontSize()-FONT_SIZE_MIN)/(FONT_SIZE_MAX-FONT_SIZE_MIN));
     button = pw->CreateButton(pos, dim, 61, EVENT_HYPER_COPY);
     button->SetState(STATE_SHADOW);
     HyperUpdate();
