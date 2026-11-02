@@ -11,7 +11,28 @@ export function crc32(buf) {
 
 const pipe = async (data, stream) => new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(stream)).arrayBuffer());
 const deflate = (d) => pipe(d, new CompressionStream('deflate-raw'));
-const inflate = (d) => pipe(d, new DecompressionStream('deflate-raw'));
+
+// Inflates at most `cap` bytes: the output stream is counted and cancelled past the cap, so a
+// zip bomb cannot exhaust memory before the size check.
+async function inflate(d, cap) {
+  const reader = new Blob([d]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > cap) { reader.cancel().catch(() => {}); throw new Error('zip entry larger than declared'); }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const c of chunks) { out.set(c, o); o += c.byteLength; }
+  return out;
+}
+
+// Save archives are small (KB to a few MB); these caps only stop hostile or broken files.
+export const ZIP_LIMITS = { entries: 5000, entryBytes: 32 << 20, totalBytes: 64 << 20 };
 
 function dosTime(date) {
   const t = (date.getHours() << 11) | (date.getMinutes() << 5) | (date.getSeconds() >> 1);
@@ -57,8 +78,9 @@ export async function writeZip(entries) {
   return out;
 }
 
-// Uint8Array (zip) -> [{path, data: Uint8Array, dir?: true}]; throws on malformed input.
-export async function readZip(buf) {
+// Uint8Array (zip) -> [{path, data: Uint8Array, dir?: true}]; throws on malformed input or
+// when the archive exceeds `limits` (entry count, per-entry and total inflated size).
+export async function readZip(buf, limits = ZIP_LIMITS) {
   const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   let eocd = -1;
@@ -66,10 +88,11 @@ export async function readZip(buf) {
     if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
   if (eocd < 0) throw new Error('not a zip file');
   const count = dv.getUint16(eocd + 10, true);
-  let p = dv.getUint32(eocd + 16, true);
+  if (count > limits.entries) throw new Error('zip has too many entries');
+  let p = dv.getUint32(eocd + 16, true), total = 0;
   const dec = new TextDecoder(), out = [];
   for (let n = 0; n < count; n++) {
-    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('bad zip central directory');
+    if (p + 46 > eocd || dv.getUint32(p, true) !== 0x02014b50) throw new Error('bad zip central directory');
     const method = dv.getUint16(p + 10, true), crc = dv.getUint32(p + 16, true);
     const csize = dv.getUint32(p + 20, true), usize = dv.getUint32(p + 24, true);
     const nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
@@ -77,12 +100,15 @@ export async function readZip(buf) {
     const path = dec.decode(u8.subarray(p + 46, p + 46 + nlen));
     p += 46 + nlen + xlen + clen;
     if (path.endsWith('/')) { out.push({ path, data: new Uint8Array(0), dir: true }); continue; }
-    if (dv.getUint32(off, true) !== 0x04034b50) throw new Error('bad zip local header');
+    if (usize > limits.entryBytes || total + usize > limits.totalBytes) throw new Error('zip too large when unpacked');
+    total += usize;
+    if (off + 30 > u8.length || dv.getUint32(off, true) !== 0x04034b50) throw new Error('bad zip local header');
     const start = off + 30 + dv.getUint16(off + 26, true) + dv.getUint16(off + 28, true);
+    if (start + csize > u8.length) throw new Error('bad zip entry size');
     const raw = u8.subarray(start, start + csize);
     let data;
     if (method === 0) data = raw.slice();
-    else if (method === 8) data = await inflate(raw);
+    else if (method === 8) data = await inflate(raw, usize);
     else throw new Error('unsupported zip method ' + method);
     if (data.length !== usize || crc32(data) !== crc) throw new Error('zip CRC mismatch: ' + path);
     out.push({ path, data });
