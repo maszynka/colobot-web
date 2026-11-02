@@ -94,6 +94,10 @@ Pipeline prewarm: not needed for now. Mission 1 has no frame > 50 ms. The menu h
 | 14 | redundant SetPipeline/SetBindGroup | deferred: per-frame CPU, not load time; mission runs at 60 fps |
 | 15 | wasm-split | deferred: high risk, wasm already 1.25 MB br |
 
+## Accounts + cloud saves (2026-11-02)
+
+The Worker now has `main` (`worker/index.js`) for `/api/*` only; static files are still served directly from assets. The web shell offers Google, email + password, or local play. `web_archiver.c` hooks (`Module.onSaveMounted`, `Module.onSaveFlushed`) let `web/account.js` restore `/save` from the cloud before the game reads it, and upload a zip 5 s after each flush. `tests/e2e/accounts.mjs` passes 11/11 checks against `wrangler dev`, and `tests/e2e/save-roundtrip.mjs` still passes. The remote D1 migration and the Google secrets are still pending (`docs/ACCOUNTS.md`).
+
 ## Known issues / TODO
 
 - Welcome screens are skipped on web. On desktop builds they still draw no splash image (likely the background/over-color path of the UI renderer).

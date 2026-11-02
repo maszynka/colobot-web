@@ -9,3 +9,5 @@ node_modules/
 .data-out/
 tests/e2e/out/
 .review/
+.wrangler/
+.dev.vars
