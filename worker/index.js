@@ -9,8 +9,16 @@ const OAUTH_COOKIE = 'colobot_oauth';
 const SESSION_TTL = 30 * 24 * 3600;           // 30 days
 const MAX_SAVE_BYTES = 20 * 1024 * 1024;      // 20 MB per archive
 const KEEP_VERSIONS = 10;
-const LOGIN_WINDOW = 15 * 60;
-const LIMITS = { 'login-ip': 30, 'login-email': 10, 'register-ip': 10 };
+const WINDOW = 15 * 60;
+// Fixed windows: at most `max` events per WINDOW per key.
+//   login-ip      failed logins from one IP (any email)
+//   register-ip   registrations from one IP
+//   put-user      save uploads per account
+// Login per (IP, email) uses exponential backoff instead (see loginBackoff), so nobody can lock a
+// victim out by knowing only the email: the counter is never keyed by email alone.
+const LIMITS = { 'login-ip': 30, 'register-ip': 10, 'put-user': 60 };
+const BACKOFF_FREE = 5;                       // failures per (IP, email) before any delay
+const BACKOFF_MAX = WINDOW;                   // delay cap; counters reset after WINDOW of quiet
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -59,12 +67,12 @@ async function readJson(req) {
   try { return await req.json(); } catch { throw new HttpError(400, 'bad_json'); }
 }
 
-// ---------- rate limiting (fixed window in D1) ----------
+// ---------- rate limiting (D1 table rate_limits) ----------
 async function rateCheck(env, kind, id) {
   const key = `${kind}:${id}`, t = now();
   const row = await env.DB.prepare('SELECT count, window_start FROM rate_limits WHERE key = ?').bind(key).first();
-  if (row && t - row.window_start < LOGIN_WINDOW && row.count >= LIMITS[kind])
-    throw new HttpError(429, 'too_many_attempts', { retryAfter: LOGIN_WINDOW - (t - row.window_start) });
+  if (row && t - row.window_start < WINDOW && row.count >= LIMITS[kind])
+    throw new HttpError(429, 'too_many_attempts', { retryAfter: WINDOW - (t - row.window_start) });
 }
 async function rateHit(env, kind, id) {
   const key = `${kind}:${id}`, t = now();
@@ -73,9 +81,40 @@ async function rateHit(env, kind, id) {
      ON CONFLICT(key) DO UPDATE SET
        count = CASE WHEN ?2 - window_start >= ?3 THEN 1 ELSE count + 1 END,
        window_start = CASE WHEN ?2 - window_start >= ?3 THEN ?2 ELSE window_start END`,
-  ).bind(key, t, LOGIN_WINDOW).run();
+  ).bind(key, t, WINDOW).run();
+  await ratePrune(env, t);
 }
-const rateClear = (env, kind, id) => env.DB.prepare('DELETE FROM rate_limits WHERE key = ?').bind(`${kind}:${id}`).run();
+const rateClear = (env, key) => env.DB.prepare('DELETE FROM rate_limits WHERE key = ?').bind(key).run();
+
+// Opportunistic cleanup (about 1 in 16 writes): rows whose window ended are useless.
+async function ratePrune(env, t, force = false) {
+  if (!force && Math.random() >= 1 / 16) return;
+  await env.DB.prepare('DELETE FROM rate_limits WHERE window_start < ?').bind(t - 2 * WINDOW).run();
+}
+
+// Login backoff per (IP, email): the first BACKOFF_FREE failures are free, then each further
+// attempt must wait 2^(n - BACKOFF_FREE) s (2, 4, 8 ... capped at BACKOFF_MAX) after the last
+// failure. window_start holds the time of the last failure; WINDOW of quiet resets the counter.
+const loginKey = (ip, email) => `login-ipemail:${ip}|${email}`;
+function backoffDelay(count) {
+  return count < BACKOFF_FREE ? 0 : Math.min(BACKOFF_MAX, 2 ** (count - BACKOFF_FREE + 1));
+}
+async function loginBackoffCheck(env, ip, email) {
+  const t = now();
+  const row = await env.DB.prepare('SELECT count, window_start FROM rate_limits WHERE key = ?').bind(loginKey(ip, email)).first();
+  if (!row || t - row.window_start >= WINDOW) return;
+  const wait = backoffDelay(row.count) - (t - row.window_start);
+  if (wait > 0) throw new HttpError(429, 'too_many_attempts', { retryAfter: wait });
+}
+async function loginBackoffHit(env, ip, email) {
+  const t = now();
+  await env.DB.prepare(
+    `INSERT INTO rate_limits (key, count, window_start) VALUES (?1, 1, ?2)
+     ON CONFLICT(key) DO UPDATE SET
+       count = CASE WHEN ?2 - window_start >= ?3 THEN 1 ELSE count + 1 END,
+       window_start = ?2`,
+  ).bind(loginKey(ip, email), t, WINDOW).run();
+}
 
 // ---------- sessions ----------
 async function createSession(env, userId) {
@@ -146,7 +185,7 @@ async function login(req, env) {
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase().slice(0, 254) : '';
   const password = typeof body.password === 'string' ? body.password.slice(0, 200) : '';
   await rateCheck(env, 'login-ip', ip);
-  await rateCheck(env, 'login-email', email);
+  await loginBackoffCheck(env, ip, email);
   const row = email && await env.DB.prepare(
     'SELECT id, email, password_hash, password_salt, password_iter FROM users WHERE email = ?',
   ).bind(email).first();
@@ -154,10 +193,10 @@ async function login(req, env) {
   const ok = row && row.password_hash ? await verifyPassword(password, row) : await dummyVerify(password, iter);
   if (!ok) {
     await rateHit(env, 'login-ip', ip);
-    await rateHit(env, 'login-email', email);
+    await loginBackoffHit(env, ip, email);
     throw new HttpError(401, 'bad_credentials');
   }
-  await rateClear(env, 'login-email', email);
+  await rateClear(env, loginKey(ip, email));
   if (row.password_iter !== iter) {
     // Re-hash at the current cost (raised or lowered via PBKDF2_ITER); stored per user.
     const ph = await hashPassword(password, iter);
