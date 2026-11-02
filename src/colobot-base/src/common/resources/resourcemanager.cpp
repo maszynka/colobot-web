@@ -25,6 +25,10 @@
 #include "common/stringutils.h"
 #include "common/resources/physfs_utils.h"
 
+#ifdef __EMSCRIPTEN__
+#include "common/resources/web_archiver.h"
+#endif
+
 #include <algorithm>
 #include <physfs.h>
 
@@ -51,6 +55,14 @@ CResourceManager::~CResourceManager()
             GetLogger()->Error("Error while deinitializing physfs: %%", PHYSFS_getErrorByCode(errorCode));
         }
     }
+}
+
+// Web: every PhysFS write lands in the IDBFS-backed /save; schedule a debounced flush.
+static void MarkSaveDirty()
+{
+#ifdef __EMSCRIPTEN__
+    web_save_dirty();
+#endif
 }
 
 std::string CResourceManager::CleanPath(const std::filesystem::path& path)
@@ -168,7 +180,9 @@ bool CResourceManager::CreateNewDirectory(const std::filesystem::path& directory
 {
     if (PHYSFS_isInit())
     {
-        return PHYSFS_mkdir(CleanPath(directory).c_str());
+        bool ok = PHYSFS_mkdir(CleanPath(directory).c_str()) != 0;
+        MarkSaveDirty();
+        return ok;
     }
     return false;
 }
@@ -177,6 +191,7 @@ bool CResourceManager::RemoveExistingDirectory(const std::filesystem::path& dire
 {
     if (PHYSFS_isInit())
     {
+        MarkSaveDirty();
         for (const auto& file : ListFiles(directory))
         {
             if (PHYSFS_delete(CleanPath(directory / file).c_str()) == 0)
@@ -265,6 +280,7 @@ bool CResourceManager::Remove(const std::filesystem::path& filename)
 {
     if (PHYSFS_isInit())
     {
+        MarkSaveDirty();
         return PHYSFS_delete(CleanPath(filename).c_str()) != 0;
     }
     return false;

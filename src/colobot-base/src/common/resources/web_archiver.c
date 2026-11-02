@@ -107,7 +107,9 @@ EM_JS(char*, wfs_js_list, (const char* path), {
 EM_JS(int, wfs_js_boot, (void** out), {
     var b = Module.colobotFS.packs.boot;
     if (!b) return -1;
-    var ptr = _malloc(b.byteLength); HEAPU8.set(b, ptr);
+    var ptr = _malloc(b.byteLength);
+    if (!ptr) return -1;
+    HEAPU8.set(b, ptr);
     HEAPU32[out >> 2] = ptr;
     return b.byteLength;
 })
@@ -127,7 +129,9 @@ EM_ASYNC_JS(int, wfs_js_fetch, (const char* path, void** out), {
         } else {
             bytes = await c.get('file:' + p);
         }
-        var ptr = _malloc(Math.max(bytes.byteLength, 1)); HEAPU8.set(bytes, ptr);
+        var ptr = _malloc(Math.max(bytes.byteLength, 1));
+        if (!ptr) { err('web_archiver: out of memory for ' + p); return -1; }
+        HEAPU8.set(bytes, ptr);
         HEAPU32[out >> 2] = ptr;
         return bytes.byteLength;
     } catch (e) {
@@ -136,19 +140,55 @@ EM_ASYNC_JS(int, wfs_js_fetch, (const char* path, void** out), {
     }
 })
 
+/* Serialized IDBFS flush: at most one FS.syncfs(false) in flight; requests that arrive while
+ * one runs coalesce into a single follow-up. Module.__wfsFlush() returns a promise that settles
+ * after a sync that started after the call. Module.__wfsDirty() debounces (250 ms). */
+EM_JS(void, wfs_js_install_sync, (void), {
+    if (Module.__wfsFlush) return;
+    var running = null, again = null;
+    var run = function() {
+        running = new Promise(function(res) {
+            FS.syncfs(false, function(e) { if (e) err('idbfs sync: ' + e); res(); });
+        }).then(function() {
+            running = null;
+            if (again) { var a = again; again = null; run().then(a.res); }
+        });
+        return running;
+    };
+    Module.__wfsFlush = function() {
+        if (!running) return run();
+        if (!again) { var r; var p = new Promise(function(x) { r = x; }); again = { p: p, res: r }; }
+        return again.p;
+    };
+    var timer = 0;
+    Module.__wfsDirty = function() {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(function() { timer = 0; Module.__wfsFlush(); }, 250);
+    };
+    Module.__wfsFlushNow = function() {
+        if (timer) { clearTimeout(timer); timer = 0; }
+        return Module.__wfsFlush();
+    };
+})
+
 EM_ASYNC_JS(void, wfs_js_mount_save, (void), {
     if (Module.__wfsSaveMounted) return;
     Module.__wfsSaveMounted = true;
     try { FS.mkdir('/save'); } catch (e) {}
     FS.mount(IDBFS, {}, '/save');
     await new Promise(function(res) { FS.syncfs(true, function(e) { if (e) err('idbfs load: ' + e); res(); }); });
-    var flush = function() { FS.syncfs(false, function() {}); };
+    /* best effort only: every write path already schedules a debounced flush */
+    var flush = function() { Module.__wfsFlushNow(); };
     addEventListener('pagehide', flush);
     document.addEventListener('visibilitychange', function() { if (document.visibilityState === 'hidden') flush(); });
 })
 
 EM_ASYNC_JS(void, wfs_js_sync, (void), {
-    await new Promise(function(res) { FS.syncfs(false, function(e) { if (e) err('idbfs sync: ' + e); res(); }); });
+    await Module.__wfsFlushNow();
+})
+
+EM_JS(void, wfs_js_dirty, (void), {
+    if (Module.__wfsDirty) Module.__wfsDirty();
 })
 
 /* ---------------- memory PHYSFS_Io (refcounted buffer) ---------------- */
@@ -213,10 +253,11 @@ static int g_archiveOpaque;
 
 static void* wa_open(PHYSFS_Io* io, const char* name, int forWrite, int* claimed)
 {
-    (void)io;
     size_t n = strlen(name);
     if (forWrite || n < 13 || strcmp(name + n - 13, "manifest.json") != 0) return NULL;
     *claimed = 1;
+    /* on success the archiver owns io; data comes from Module.colobotFS, not from it */
+    if (io) io->destroy(io);
     return &g_archiveOpaque;
 }
 
@@ -293,9 +334,11 @@ static const PHYSFS_Archiver g_webArchiver = {
 
 /* ---------------- public ---------------- */
 
-void web_fs_mount_save(void) { wfs_js_mount_save(); }
+void web_fs_mount_save(void) { wfs_js_install_sync(); wfs_js_mount_save(); }
 
-void web_save_sync(void) { wfs_js_sync(); }
+void web_save_sync(void) { wfs_js_install_sync(); wfs_js_sync(); }
+
+void web_save_dirty(void) { wfs_js_dirty(); }
 
 static void free_cb(void* p) { free(p); }
 

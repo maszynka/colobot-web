@@ -22,6 +22,10 @@
 #include "common/resources/resourcemanager.h"
 #include "common/resources/physfs_utils.h"
 
+#ifdef __EMSCRIPTEN__
+#include "common/resources/web_archiver.h"
+#endif
+
 #include <stdexcept>
 #include <sstream>
 
@@ -60,7 +64,13 @@ void COutputStreamBuffer::close()
 {
     sync();
     if (is_open())
+    {
         PHYSFS_close(m_file);
+        m_file = nullptr;
+#ifdef __EMSCRIPTEN__
+        web_save_dirty();
+#endif
+    }
 }
 
 
