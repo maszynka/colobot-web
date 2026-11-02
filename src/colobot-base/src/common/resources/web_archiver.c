@@ -142,7 +142,9 @@ EM_ASYNC_JS(int, wfs_js_fetch, (const char* path, void** out), {
 
 /* Serialized IDBFS flush: at most one FS.syncfs(false) in flight; requests that arrive while
  * one runs coalesce into a single follow-up. Module.__wfsFlush() returns a promise that settles
- * after a sync that started after the call. Module.__wfsDirty() debounces (250 ms). */
+ * after a sync that started after the call. Module.__wfsDirty() debounces (250 ms).
+ * Optional shell hooks: Module.onSaveMounted() (async, after the IDBFS load, before main reads
+ * /save) and Module.onSaveFlushed() (after every completed flush). */
 EM_JS(void, wfs_js_install_sync, (void), {
     if (Module.__wfsFlush) return;
     var running = null, again = null;
@@ -151,6 +153,8 @@ EM_JS(void, wfs_js_install_sync, (void), {
             FS.syncfs(false, function(e) { if (e) err('idbfs sync: ' + e); res(); });
         }).then(function() {
             running = null;
+            /* web shell hook (web/sync.js): a flush to IndexedDB completed */
+            if (Module.onSaveFlushed) { try { Module.onSaveFlushed(); } catch (e) { err('onSaveFlushed: ' + e); } }
             if (again) { var a = again; again = null; run().then(a.res); }
         });
         return running;
@@ -177,6 +181,9 @@ EM_ASYNC_JS(void, wfs_js_mount_save, (void), {
     try { FS.mkdir('/save'); } catch (e) {}
     FS.mount(IDBFS, {}, '/save');
     await new Promise(function(res) { FS.syncfs(true, function(e) { if (e) err('idbfs load: ' + e); res(); }); });
+    /* web shell hook (web/sync.js): may replace /save from a cloud archive before the game reads it;
+     * main() stays suspended (JSPI) until the promise settles. */
+    if (Module.onSaveMounted) { try { await Module.onSaveMounted(); } catch (e) { err('onSaveMounted: ' + e); } }
     /* best effort only: every write path already schedules a debounced flush */
     var flush = function() { Module.__wfsFlushNow(); };
     addEventListener('pagehide', flush);
