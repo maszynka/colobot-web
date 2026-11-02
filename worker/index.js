@@ -4,7 +4,8 @@ import {
   hashPassword, verifyPassword, dummyVerify, iterations, randomToken, sha256Hex, sha256B64url, timingSafeEqual,
 } from './crypto.js';
 
-const SESSION_COOKIE = 'colobot_session';
+// __Host- prefix: the browser rejects it unless Secure, Path=/ and no Domain (no subdomain override).
+const SESSION_COOKIE = '__Host-colobot_session';
 const OAUTH_COOKIE = 'colobot_oauth';
 const SESSION_TTL = 30 * 24 * 3600;           // 30 days
 const MAX_SAVE_BYTES = 20 * 1024 * 1024;      // 20 MB per archive
@@ -36,7 +37,9 @@ function parseCookies(req) {
   const out = {};
   for (const part of (req.headers.get('Cookie') || '').split(';')) {
     const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    if (i <= 0) continue;
+    // A malformed value (bad %-escape) is skipped, not a 500 for every request.
+    try { out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim()); } catch { /* skip */ }
   }
   return out;
 }
@@ -53,7 +56,9 @@ const clientIp = (req) => req.headers.get('CF-Connecting-IP') || 'local';
 function checkCsrf(req, url) {
   if (req.method === 'GET' || req.method === 'HEAD') return;
   const origin = req.headers.get('Origin');
-  if (!origin || origin !== url.origin) throw new HttpError(403, 'bad_origin');
+  // Fallback for the rare same-origin client that omits Origin: Sec-Fetch-Site (browser-set).
+  const sameSite = !origin && req.headers.get('Sec-Fetch-Site') === 'same-origin';
+  if (!sameSite && origin !== url.origin) throw new HttpError(403, 'bad_origin');
   const ct = (req.headers.get('Content-Type') || '').split(';')[0].trim();
   if (req.method === 'POST' && ct !== 'application/json') throw new HttpError(415, 'json_required');
   // PUT (zip body) and DELETE carry a custom header, which a cross-site form cannot send.
@@ -61,10 +66,33 @@ function checkCsrf(req, url) {
     throw new HttpError(403, 'missing_header');
 }
 
+// Reads the body as bytes, aborting as soon as it passes `max` (Content-Length is only a hint:
+// a chunked body has none, so the stream itself is counted).
+async function readBody(req, max) {
+  const declared = +(req.headers.get('Content-Length') || 0);
+  if (declared > max) throw new HttpError(413, 'too_large', { maxBytes: max });
+  if (!req.body) return new Uint8Array(0);
+  const reader = req.body.getReader(), chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      reader.cancel().catch(() => {});
+      throw new HttpError(413, 'too_large', { maxBytes: max });
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const c of chunks) { out.set(c, o); o += c.byteLength; }
+  return out;
+}
+
 async function readJson(req) {
-  const len = +(req.headers.get('Content-Length') || 0);
-  if (len > 16384) throw new HttpError(413, 'too_large');
-  try { return await req.json(); } catch { throw new HttpError(400, 'bad_json'); }
+  const bytes = await readBody(req, 16384);
+  try { return JSON.parse(new TextDecoder().decode(bytes)); } catch { throw new HttpError(400, 'bad_json'); }
 }
 
 // ---------- rate limiting (D1 table rate_limits) ----------
@@ -130,13 +158,17 @@ async function currentUser(req, env) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token || token.length > 100) return null;
   const row = await env.DB.prepare(
-    `SELECT u.id, u.email, s.token_hash FROM sessions s JOIN users u ON u.id = s.user_id
+    `SELECT u.id, u.email, u.password_hash, u.password_salt, u.password_iter, s.token_hash, s.created_at
+     FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.expires_at > ?`,
   ).bind(await sha256Hex(token), now()).first();
   if (!row) return null;
   const g = await env.DB.prepare("SELECT email FROM oauth_identities WHERE user_id = ? AND provider = 'google'")
     .bind(row.id).first();
-  return { id: row.id, email: row.email || (g && g.email) || null, provider: row.email ? 'password' : 'google', tokenHash: row.token_hash };
+  return {
+    id: row.id, email: row.email || (g && g.email) || null, provider: row.email ? 'password' : 'google',
+    tokenHash: row.token_hash, sessionAge: now() - row.created_at, row,
+  };
 }
 
 async function requireUser(req, env) {
@@ -213,8 +245,27 @@ async function logout(req, env) {
   return json({ ok: true }, 200, { 'Set-Cookie': cookie(SESSION_COOKIE, '', { maxAge: 0 }) });
 }
 
+// Irreversible, so a session cookie alone is not enough (left-behind / stolen session):
+//   body {confirm: "delete"} always; password accounts also send {password};
+//   Google accounts need a session younger than REAUTH_AGE (sign in with Google again).
+const REAUTH_AGE = 10 * 60;
 async function deleteAccount(req, env) {
   const u = await requireUser(req, env);
+  const body = await readJson(req);
+  if (!body || body.confirm !== 'delete') throw new HttpError(400, 'confirm_required');
+  if (u.provider === 'password') {
+    const ip = clientIp(req);
+    await rateCheck(env, 'login-ip', ip);
+    await loginBackoffCheck(env, ip, u.email);
+    const password = typeof body.password === 'string' ? body.password.slice(0, 200) : '';
+    if (!password || !(await verifyPassword(password, u.row))) {
+      await rateHit(env, 'login-ip', ip);
+      await loginBackoffHit(env, ip, u.email);
+      throw new HttpError(403, 'bad_credentials');
+    }
+  } else if (u.sessionAge > REAUTH_AGE) {
+    throw new HttpError(403, 'reauth_required', { maxAge: REAUTH_AGE });
+  }
   const rows = await env.DB.prepare('SELECT r2_key FROM saves WHERE user_id = ?').bind(u.id).all();
   const keys = rows.results.map((r) => r.r2_key);
   if (keys.length) await env.SAVES.delete(keys);
@@ -223,6 +274,10 @@ async function deleteAccount(req, env) {
     env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(u.id),
     env.DB.prepare('DELETE FROM oauth_identities WHERE user_id = ?').bind(u.id),
     env.DB.prepare('DELETE FROM users WHERE id = ?').bind(u.id),
+    // Login counters keyed by this email ('login-ipemail:<ip>|<email>') go too.
+    env.DB.prepare("DELETE FROM rate_limits WHERE key LIKE 'login-ipemail:%' AND substr(key, -length(?1)) = ?1")
+      .bind(u.provider === 'password' ? '|' + u.email : '\u0000'),
+    env.DB.prepare('DELETE FROM rate_limits WHERE key = ?').bind('put-user:' + u.id),
   ]);
   return json({ deleted: true }, 200, { 'Set-Cookie': cookie(SESSION_COOKIE, '', { maxAge: 0 }) });
 }
@@ -347,18 +402,19 @@ async function putSave(req, env) {
   const u = await requireUser(req, env);
   const declared = +(req.headers.get('Content-Length') || 0);
   if (declared > MAX_SAVE_BYTES) throw new HttpError(413, 'too_large', { maxBytes: MAX_SAVE_BYTES });
+  await rateCheck(env, 'put-user', u.id);
+  await rateHit(env, 'put-user', u.id);
   const baseHdr = req.headers.get('X-Base-Version') || '0';
   const base = /^\d+$/.test(baseHdr) ? +baseHdr : -1;
   if (base < 0) throw new HttpError(400, 'bad_base');
   const hash = (req.headers.get('X-Save-Hash') || '').slice(0, 128);
-  const device = (req.headers.get('X-Device') || '').slice(0, 80);
+  const device = (req.headers.get('X-Device') || '').replace(/[^\w .()-]/g, '').slice(0, 80);
 
   const latest = await latestSave(env, u.id);
   const latestV = latest ? latest.version : 0;
   if (latestV !== base) throw new HttpError(409, 'conflict', { latest: saveMeta(latest) });
 
-  const body = new Uint8Array(await req.arrayBuffer());
-  if (body.length > MAX_SAVE_BYTES) throw new HttpError(413, 'too_large', { maxBytes: MAX_SAVE_BYTES });
+  const body = await readBody(req, MAX_SAVE_BYTES);
   const isZip = body.length >= 4 && body[0] === 0x50 && body[1] === 0x4b && (body[2] === 3 || body[2] === 5);
   if (!isZip) throw new HttpError(400, 'not_zip');
 

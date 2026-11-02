@@ -29,12 +29,13 @@ button:disabled{opacity:.5;cursor:default}
 <li><b>Google sign-in:</b> your Google account ID (<code>sub</code>) and email address. We request only the <code>openid email</code> scopes.</li>
 <li><b>Sessions:</b> a random sign-in token in an HttpOnly cookie; the server keeps only its hash, for up to 30 days or until you sign out.</li>
 <li><b>Saved games:</b> a zip archive of your game's save folder (player profiles, saved missions, your CBOT programs, settings), with the last 10 versions, the upload time and a short device label such as "Windows Chrome".</li>
-<li><b>Abuse protection:</b> counters of failed sign-in attempts per IP address and email, kept for about 15 minutes.</li>
+<li><b>Abuse protection:</b> counters of failed sign-in attempts per IP address and per IP address + email, and of save uploads per account, kept for about 15–30 minutes.</li>
 </ul>
 <p>Data is stored on Cloudflare (Workers, D1, R2). It is used only to run the game's save sync, never sold or shared, and there is no tracking or advertising.</p>
 
 <h2>Deleting your data</h2>
-<p>Sign in, open the account badge in the top-right corner of the game and choose <b>Delete account and cloud saves</b>, or use the button below. This removes your account, sessions and every cloud save immediately. Saves in your browser are kept; you can remove them by clearing site data.</p>
+<p>Sign in, open the account badge in the top-right corner of the game and choose <b>Delete account and cloud saves</b>, or use the button below. Password accounts confirm with the password; Google accounts must have signed in within the last 10 minutes. This removes your account, sessions and every cloud save immediately. Saves in your browser are kept; you can remove them by clearing site data.</p>
+<input id="pw" type="password" placeholder="Your password" autocomplete="current-password" hidden>
 <button id="del" disabled>Delete my account and cloud saves</button>
 <div id="msg"></div>
 
@@ -52,13 +53,24 @@ button:disabled{opacity:.5;cursor:default}
   if (!me.user) { msg.textContent = 'You are not signed in.'; return; }
   msg.textContent = 'Signed in as ' + (me.user.email || 'Google account') + '.';
   del.disabled = false;
+  const pw = document.getElementById('pw');
+  if (me.user.provider === 'password') pw.hidden = false;
   del.onclick = async () => {
     if (!confirm('Delete your account and all cloud saves? This cannot be undone.')) return;
     del.disabled = true;
-    const r = await fetch('/api/me', { method: 'DELETE', headers: { 'X-Colobot': '1' } });
-    msg.textContent = r.ok ? 'Your account and cloud saves were deleted.' : 'Deletion failed (' + r.status + '). Please try again.';
-    if (!r.ok) del.disabled = false;
-    try { localStorage.removeItem('colobot.mode'); } catch (e) {}
+    const body = { confirm: 'delete' };
+    if (me.user.provider === 'password') body.password = pw.value;
+    const r = await fetch('/api/me', {
+      method: 'DELETE', body: JSON.stringify(body), headers: { 'X-Colobot': '1', 'Content-Type': 'application/json' },
+    });
+    const err = r.ok ? null : ((await r.json().catch(() => ({}))).error || r.status);
+    msg.textContent = r.ok ? 'Your account and cloud saves were deleted.'
+      : err === 'bad_credentials' ? 'Wrong password.'
+      : err === 'reauth_required' ? 'For safety, sign in with Google again (within 10 minutes), then delete.'
+      : err === 'too_many_attempts' ? 'Too many attempts. Try again in a few minutes.'
+      : 'Deletion failed (' + err + '). Please try again.';
+    if (!r.ok) { del.disabled = false; return; }
+    try { localStorage.removeItem('colobot.mode'); localStorage.removeItem('colobot.user'); } catch (e) {}
   };
 })();
 </script>
