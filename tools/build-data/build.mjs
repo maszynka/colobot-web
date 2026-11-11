@@ -14,7 +14,7 @@ const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf('--' + n); return i < 0 ? d : args[i + 1]; };
 const flag = (n) => args.includes('--' + n);
 const SRC = path.resolve(opt('src', path.join(root, 'upstream/colobot-data')));
-const SRC_FALLBACK = '<repo>/upstream/colobot-data';
+const SRC_FALLBACK = '/Users/danielbogusz/projects/colobot-web/upstream/colobot-data';
 const src = fs.existsSync(SRC) ? SRC : SRC_FALLBACK;
 const OUT = path.resolve(opt('out', path.join(root, 'dist/data')));
 const CACHE = path.resolve(opt('music-cache', path.join(root, '.cache/build-data')));
